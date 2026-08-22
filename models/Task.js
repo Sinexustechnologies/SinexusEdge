@@ -67,11 +67,29 @@ const taskSchema = new mongoose.Schema(
     verifiedAt: Date,
     resolvedAt: Date,
 
+    currentAttempt: { type: Number, default: 1 },
+    attempts: [{
+        attemptNumber: { type: Number, default: 1 },
+        staff: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        staffName: { type: String, default: "" },
+        startedAt: Date,
+        submittedAt: Date,
+        durationMins: Number,
+        photos: [String],
+        status: String,
+        adminRemarks: { type: String, default: "" },
+        rejectedAt: Date,
+        verifiedAt: Date
+    }],
+
     timeline: [{
         status: String,
         timestamp: { type: Date, default: Date.now },
         updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-        notes: String
+        notes: String,
+        attemptNumber: Number,
+        photos: [String],
+        durationMins: Number
     }]
 },
 {

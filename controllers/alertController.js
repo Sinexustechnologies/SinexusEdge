@@ -426,7 +426,7 @@ module.exports = {
 
                 if (remainingOpenAlerts === 0) {
                     isClean = true;
-                    await Device.findByIdAndUpdate(dev._id, { status: "clean" });
+                    await Device.findByIdAndUpdate(dev._id, { status: "clean", $inc: { cleaningCount: 1, totalCleanings: 1 }, lastCleaned: now, lastCleanedAt: now, lastCleanedDate: now, lastCleanedTimestamp: now, lastCleanedByStaff: req.user ? (req.user.name || "Admin") : "Admin (Force Verified)" });
                     await LatestDeviceStatus.findOneAndUpdate(
                         { $or: [{ device_uid: dev.device_uid }, { deviceId: dev.deviceId }] },
                         {
@@ -554,7 +554,7 @@ module.exports = {
 
                 if (remainingOpenAlerts === 0) {
                     isClean = true;
-                    await Device.findByIdAndUpdate(dev._id, { status: "clean" });
+                    await Device.findByIdAndUpdate(dev._id, { status: "clean", $inc: { cleaningCount: 1, totalCleanings: 1 }, lastCleaned: now, lastCleanedAt: now, lastCleanedDate: now, lastCleanedTimestamp: now, lastCleanedByStaff: req.user ? (req.user.name || "Admin") : "Admin (Force Verified)" });
                     await LatestDeviceStatus.findOneAndUpdate(
                         { $or: [{ device_uid: dev.device_uid }, { deviceId: dev.deviceId }] },
                         {

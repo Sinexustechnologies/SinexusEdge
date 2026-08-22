@@ -308,6 +308,7 @@ const submitTask = async (req, res) => {
             ? Math.round((now.getTime() - new Date(task.startedAt).getTime()) / (1000 * 60))
             : 0;
 
+        const currentAttemptNum = task.currentAttempt || 1;
         task.status = "SUBMITTED";
         task.submittedAt = now;
         task.completedAt = now;
@@ -315,11 +316,29 @@ const submitTask = async (req, res) => {
         task.progressPercent = 100;
         if (notes) task.notes = notes;
 
+        const photoUrls = (task.cleaningPhotos || []).map(p => typeof p === 'object' && p.url ? p.url : p.toString());
+
+        if (!Array.isArray(task.attempts)) task.attempts = [];
+        let attemptRecord = task.attempts.find(a => a.attemptNumber === currentAttemptNum);
+        if (!attemptRecord) {
+            attemptRecord = { attemptNumber: currentAttemptNum };
+            task.attempts.push(attemptRecord);
+        }
+        attemptRecord.staff = task.staff;
+        attemptRecord.startedAt = task.startedAt || now;
+        attemptRecord.submittedAt = now;
+        attemptRecord.durationMins = Math.round(elapsedMins);
+        attemptRecord.photos = photoUrls;
+        attemptRecord.status = "SUBMITTED";
+
         task.timeline.push({
             status: "SUBMITTED",
             timestamp: now,
             updatedBy: req.user.id,
-            notes: `Submitted after ${Math.round(elapsedMins)} minutes of cleaning`
+            notes: `Submitted Attempt ${currentAttemptNum} after ${Math.round(elapsedMins)} minutes of cleaning`,
+            attemptNumber: currentAttemptNum,
+            photos: photoUrls,
+            durationMins: Math.round(elapsedMins)
         });
 
         await task.save();
@@ -417,7 +436,7 @@ const verifyTask = async (req, res) => {
 
             if (remainingOpenAlerts === 0) {
                 isClean = true;
-                await Device.findByIdAndUpdate(dev._id, { status: "clean" });
+                await Device.findByIdAndUpdate(dev._id, { status: "clean", $inc: { cleaningCount: 1, totalCleanings: 1 }, lastCleaned: now, lastCleanedAt: now, lastCleanedDate: now, lastCleanedTimestamp: now, lastCleanedByStaff: req.user ? (req.user.name || "Admin") : "Admin" });
                 await LatestDeviceStatus.findOneAndUpdate(
                     { $or: [{ device_uid: dev.device_uid }, { deviceId: dev.deviceId }] },
                     {
@@ -495,15 +514,34 @@ const rejectTask = async (req, res) => {
         }
 
         const now = new Date();
+        const currentAttemptNum = task.currentAttempt || 1;
         task.status = "REJECTED";
         task.adminRemarks = remarks || "Rejected by admin";
         task.progressPercent = 0;
+
+        const photoUrls = (task.cleaningPhotos || []).map(p => typeof p === 'object' && p.url ? p.url : p.toString());
+
+        if (!Array.isArray(task.attempts)) task.attempts = [];
+        let attemptRecord = task.attempts.find(a => a.attemptNumber === currentAttemptNum);
+        if (!attemptRecord) {
+            attemptRecord = { attemptNumber: currentAttemptNum, staff: task.staff };
+            task.attempts.push(attemptRecord);
+        }
+        attemptRecord.status = "REJECTED";
+        attemptRecord.adminRemarks = remarks || "Rejected by admin";
+        attemptRecord.rejectedAt = now;
+        if (!attemptRecord.photos || attemptRecord.photos.length === 0) {
+            attemptRecord.photos = photoUrls;
+        }
 
         task.timeline.push({
             status: "REJECTED",
             timestamp: now,
             updatedBy: req.user ? req.user.id : null,
-            notes: remarks ? `Rejected by admin: ${remarks}` : "Task rejected by admin"
+            notes: remarks ? `Rejected by admin (Attempt ${currentAttemptNum}): ${remarks}` : `Task Attempt ${currentAttemptNum} rejected by admin`,
+            attemptNumber: currentAttemptNum,
+            photos: attemptRecord.photos,
+            durationMins: task.durationMins
         });
 
         await task.save();
@@ -595,6 +633,8 @@ const reassignTask = async (req, res) => {
 
         const isSameStaff = prevStaffId ? (prevStaffId === staff._id.toString()) : false;
 
+        task.currentAttempt = (task.currentAttempt || 1) + 1;
+        const newAttemptNum = task.currentAttempt;
         task.staff = staff._id;
         task.status = "ASSIGNED";
         task.progressPercent = 0;
@@ -607,7 +647,7 @@ const reassignTask = async (req, res) => {
             task.adminRemarks = reassignReason;
         }
 
-        // Clear previous work and submission state so staff can start fresh work & upload new photos
+        // Reset active submission state for new attempt while keeping previous attempts saved in attempts array
         task.startedAt = null;
         task.submittedAt = null;
         task.photosUploadedAt = null;
@@ -625,7 +665,8 @@ const reassignTask = async (req, res) => {
             prevStaff: prevStaffId,
             newStaff: staff._id.toString(),
             isSameStaff: isSameStaff,
-            notes: `Reassigned to ${staff.name || staff.userId}`
+            attemptNumber: newAttemptNum,
+            notes: `Reassigned to ${staff.name || staff.userId} for Attempt ${newAttemptNum}`
         });
 
         await task.save();
@@ -814,7 +855,7 @@ const getMyTasks = async (req, res) => {
 const getAllTasksForAdmin = async (req, res) => {
     try {
         const tasks = await Task.find()
-            .populate("staff", "name empId email")
+            .populate("staff", "name empId userId email").populate("attempts.staff", "name empId userId email")
             .populate("device", "deviceId location floor device_uid")
             .populate("assignedBy", "name email")
             .populate("alert")
@@ -835,7 +876,7 @@ const getAllTasksForAdmin = async (req, res) => {
 const getTaskTimeline = async (req, res) => {
     try {
         const task = await Task.findById(req.params.taskId)
-            .populate("staff", "name empId email")
+            .populate("staff", "name empId userId email").populate("attempts.staff", "name empId userId email")
             .populate("device", "deviceId location floor device_uid")
             .populate("alert")
             .populate("timeline.updatedBy", "name role");
@@ -889,7 +930,7 @@ const forceVerifyTask = async (req, res) => {
     try {
         const taskId = req.params.taskId || req.body.taskId;
         const alertId = req.body.alertId;
-        const remarks = req.body.remarks || req.body.reason || req.body.notes || "Force verified by admin";
+        const remarks = req.body.remarks || req.body.reason || req.body.notes || "Force verified clean by admin";
 
         let task = taskId ? await Task.findById(taskId) : null;
         if (!task && alertId) {
@@ -897,43 +938,166 @@ const forceVerifyTask = async (req, res) => {
         }
 
         const now = new Date();
+        const Device = require("../models/Device");
+        const LatestDeviceStatus = require("../models/LatestDeviceStatus");
+        const Alert = require("../models/Alert");
 
         if (task) {
-            task.status = "EXPIRED";
+            task.status = "VERIFIED";
             task.adminRemarks = remarks;
+            task.verifiedAt = now;
+            task.completedAt = task.completedAt || now;
+            task.resolvedAt = now;
+            task.progressPercent = 100;
             if (!Array.isArray(task.timeline)) task.timeline = [];
             task.timeline.push({
-                status: "EXPIRED",
+                status: "VERIFIED",
                 timestamp: now,
                 updatedBy: req.user ? req.user.id : null,
-                notes: `Force verified by admin: ${remarks}`
+                notes: `Force verified clean by admin: ${remarks}`
             });
             await task.save();
 
+            let alertObj = null;
             if (task.alert) {
-                const Alert = require("../models/Alert");
-                await Alert.findByIdAndUpdate(task.alert, {
+                alertObj = await Alert.findByIdAndUpdate(task.alert, {
                     status: "VERIFIED",
                     resolvedAt: now,
                     adminRemarks: remarks,
                     remarks: remarks,
                     updatedAt: now
+                }, { new: true });
+            }
+
+            let dev = null;
+            if (task.device) {
+                dev = await Device.findById(task.device);
+            }
+            if (!dev && alertObj && alertObj.device) {
+                dev = await Device.findById(alertObj.device);
+            }
+            if (!dev && (task.deviceId || task.device_uid)) {
+                dev = await Device.findOne({
+                    $or: [
+                        { deviceId: task.deviceId || task.device_uid },
+                        { device_uid: task.device_uid || task.deviceId }
+                    ]
                 });
             }
 
+            if (dev) {
+                await Device.findByIdAndUpdate(dev._id, {
+                    status: "clean",
+                    $inc: { cleaningCount: 1, totalCleanings: 1 },
+                    lastCleaned: now,
+                    lastCleanedAt: now,
+                    lastCleanedDate: now,
+                    lastCleanedTimestamp: now,
+                    lastCleanedByStaff: req.user ? (req.user.name || "Admin") : "Admin (Force Verified)"
+                });
+
+                await LatestDeviceStatus.findOneAndUpdate(
+                    { $or: [{ device_uid: dev.device_uid }, { deviceId: dev.deviceId }] },
+                    {
+                        $set: {
+                            feedback: 4,
+                            Counter: 0,
+                            CounterValue: 0,
+                            OdorSensVal: 0,
+                            OdorLevel: 0,
+                            status: "clean",
+                            timestamp: now
+                        }
+                    },
+                    { upsert: true }
+                );
+
+                if (global.io) {
+                    const cleanPayload = {
+                        device_uid: dev.device_uid,
+                        deviceId: dev.deviceId,
+                        status: "clean",
+                        toiletStatus: "Clean",
+                        feedback: 4,
+                        Counter: 0,
+                        CounterValue: 0,
+                        OdorSensVal: 0,
+                        OdorLevel: 0,
+                        timestamp: now
+                    };
+                    global.io.emit("device_status_update", cleanPayload);
+                    global.io.emit("toilet_status_updated", cleanPayload);
+                }
+            }
+
             if (global.io) {
-                global.io.emit("task_status_updated", { taskId: task._id, status: "EXPIRED", adminRemarks: remarks });
+                global.io.emit("task_status_updated", { taskId: task._id, status: "VERIFIED", progressPercent: 100, adminRemarks: remarks });
                 global.io.emit("new_alert", { alertId: task.alert, status: "VERIFIED", adminRemarks: remarks });
             }
         } else if (alertId) {
-            const Alert = require("../models/Alert");
-            await Alert.findByIdAndUpdate(alertId, {
+            const alertObj = await Alert.findByIdAndUpdate(alertId, {
                 status: "VERIFIED",
                 resolvedAt: now,
                 adminRemarks: remarks,
                 remarks: remarks,
                 updatedAt: now
-            });
+            }, { new: true });
+
+            if (alertObj) {
+                let dev = null;
+                if (alertObj.device) {
+                    dev = await Device.findById(alertObj.device);
+                }
+                if (!dev && alertObj.deviceId) {
+                    dev = await Device.findOne({ $or: [{ deviceId: alertObj.deviceId }, { device_uid: alertObj.deviceId }] });
+                }
+
+                if (dev) {
+                    await Device.findByIdAndUpdate(dev._id, {
+                        status: "clean",
+                        $inc: { cleaningCount: 1, totalCleanings: 1 },
+                        lastCleaned: now,
+                        lastCleanedAt: now,
+                        lastCleanedDate: now,
+                        lastCleanedTimestamp: now,
+                        lastCleanedByStaff: req.user ? (req.user.name || "Admin") : "Admin (Force Verified)"
+                    });
+
+                    await LatestDeviceStatus.findOneAndUpdate(
+                        { $or: [{ device_uid: dev.device_uid }, { deviceId: dev.deviceId }] },
+                        {
+                            $set: {
+                                feedback: 4,
+                                Counter: 0,
+                                CounterValue: 0,
+                                OdorSensVal: 0,
+                                OdorLevel: 0,
+                                status: "clean",
+                                timestamp: now
+                            }
+                        },
+                        { upsert: true }
+                    );
+
+                    if (global.io) {
+                        const cleanPayload = {
+                            device_uid: dev.device_uid,
+                            deviceId: dev.deviceId,
+                            status: "clean",
+                            toiletStatus: "Clean",
+                            feedback: 4,
+                            Counter: 0,
+                            CounterValue: 0,
+                            OdorSensVal: 0,
+                            OdorLevel: 0,
+                            timestamp: now
+                        };
+                        global.io.emit("device_status_update", cleanPayload);
+                        global.io.emit("toilet_status_updated", cleanPayload);
+                    }
+                }
+            }
+
             if (global.io) {
                 global.io.emit("new_alert", { alertId: alertId, status: "VERIFIED", adminRemarks: remarks });
             }
@@ -941,11 +1105,11 @@ const forceVerifyTask = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            message: "Task force verified by admin."
+            message: "Task force verified clean by admin."
         });
     } catch (error) {
         console.error("Error force verifying task:", error);
-        return res.status(500).json({ success: false, message: "Server error force verifying task" });
+        return res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
