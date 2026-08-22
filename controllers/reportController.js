@@ -416,15 +416,25 @@ const getDeviceReports = async (req, res) => {
             if (!d) return "";
             const date = new Date(d);
             if (isNaN(date.getTime())) return String(d).split('T')[0];
-            return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, '0') + "-" + String(date.getDate()).padStart(2, '0');
+            const parts = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+            const day = parts.find(p => p.type === 'day').value;
+            const month = parts.find(p => p.type === 'month').value;
+            const year = parts.find(p => p.type === 'year').value;
+            return `${year}-${month}-${day}`;
         };
 
         const formatTimeStr = (d) => {
             if (!d) return "N/A";
             const date = new Date(d);
             if (isNaN(date.getTime())) return "N/A";
-            return date.toLocaleString("en-US", {
-                day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+            return date.toLocaleString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true
             });
         };
 
@@ -931,29 +941,221 @@ const getDeviceReports = async (req, res) => {
     }
 };
 
-// 8. Download Report CSV
+// 8. Download Report CSV (Includes Multi-Attempt Details & IST Time)
 const downloadReportCsv = async (req, res) => {
     try {
         const dateRangeResult = parseAndValidateReportDateRange(req.query);
         if (dateRangeResult.error) {
             return res.status(400).json({ success: false, message: dateRangeResult.error });
         }
-        res.status(200).json({ success: true, message: "CSV export generated" });
+        const { fromDate, tillDate } = dateRangeResult;
+        const { deviceId } = req.query;
+
+        req.query.from = fromDate.toISOString();
+        req.query.till = tillDate.toISOString();
+        
+        const { devices: userDevices } = await getAdminDeviceScope(req.user);
+        let targetDevices = userDevices;
+        if (deviceId) {
+            targetDevices = userDevices.filter(d => 
+                d.deviceId === deviceId || d.device_uid === deviceId || d._id.toString() === deviceId
+            );
+        }
+
+        const deviceIds = targetDevices.map(d => d._id);
+        const tasks = await Task.find({ device: { $in: deviceIds } })
+            .populate("staff device assignedBy")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const formatTimeIST = (d) => {
+            if (!d) return "N/A";
+            const date = new Date(d);
+            if (isNaN(date.getTime())) return "N/A";
+            return date.toLocaleString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                day: "2-digit", month: "short", year: "numeric",
+                hour: "2-digit", minute: "2-digit", hour12: true
+            }).replace(',', '');
+        };
+
+        let csvRows = [];
+        csvRows.push([
+            "Task ID",
+            "Facility Location",
+            "Task Name",
+            "Staff Name",
+            "Staff ID",
+            "Current Status",
+            "Total Attempts",
+            "Attempt Number",
+            "Attempt Staff",
+            "Attempt Started (IST)",
+            "Attempt Submitted (IST)",
+            "Attempt Verified (IST)",
+            "Duration (Mins)",
+            "Photos Uploaded",
+            "Rejection / Admin Remarks"
+        ].map(cell => `"${cell}"`).join(','));
+
+        for (const t of tasks) {
+            const devLoc = t.device ? (t.device.location || t.device.deviceId || "Restroom") : "Restroom";
+            const taskTitle = t.taskName || t.title || "Restroom Cleaning";
+            const mainStaff = t.staff ? (t.staff.name || t.staff.userId || "Staff") : "Unassigned";
+            const mainStaffId = t.staff ? (t.staff.empId || t.staff.userId || "N/A") : "N/A";
+            const totalAtts = t.attempts && t.attempts.length > 0 ? t.attempts.length : (t.currentAttempt || 1);
+
+            if (t.attempts && t.attempts.length > 0) {
+                for (const att of t.attempts) {
+                    csvRows.push([
+                        t._id.toString(),
+                        devLoc,
+                        taskTitle,
+                        mainStaff,
+                        mainStaffId,
+                        t.status,
+                        totalAtts,
+                        att.attemptNumber || 1,
+                        att.staffName || mainStaff,
+                        formatTimeIST(att.startedAt || t.startedAt),
+                        formatTimeIST(att.submittedAt || t.submittedAt),
+                        formatTimeIST(att.verifiedAt || t.verifiedAt),
+                        att.durationMins || t.durationMins || "N/A",
+                        att.photos ? att.photos.length : 0,
+                        (att.adminRemarks || t.adminRemarks || "").replace(/"/g, '""')
+                    ].map(cell => `"${cell}"`).join(','));
+                }
+            } else {
+                csvRows.push([
+                    t._id.toString(),
+                    devLoc,
+                    taskTitle,
+                    mainStaff,
+                    mainStaffId,
+                    t.status,
+                    totalAtts,
+                    1,
+                    mainStaff,
+                    formatTimeIST(t.startedAt),
+                    formatTimeIST(t.submittedAt),
+                    formatTimeIST(t.verifiedAt),
+                    t.durationMins || "N/A",
+                    t.cleaningPhotos ? t.cleaningPhotos.length : 0,
+                    (t.adminRemarks || "").replace(/"/g, '""')
+                ].map(cell => `"${cell}"`).join(','));
+            }
+        }
+
+        const csvContent = csvRows.join('\n');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="sinexus_operational_report_${Date.now()}.csv"`);
+        return res.status(200).send(csvContent);
     } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
+        console.error("Error generating CSV report:", error);
+        return res.status(500).json({ success: false, message: "Server Error generating CSV report" });
     }
 };
 
-// 9. Download Report PDF
+// 9. Download Report PDF (Includes Multi-Attempt Audit Trail & IST Time)
 const downloadReportPdf = async (req, res) => {
     try {
         const dateRangeResult = parseAndValidateReportDateRange(req.query);
         if (dateRangeResult.error) {
             return res.status(400).json({ success: false, message: dateRangeResult.error });
         }
-        res.status(200).json({ success: true, message: "PDF export generated" });
+        const { fromDate, tillDate } = dateRangeResult;
+        const { deviceId } = req.query;
+
+        const { generatedBy, userId } = await getReportUserInfo(req.user);
+        const { devices: userDevices } = await getAdminDeviceScope(req.user);
+
+        let targetDevices = userDevices;
+        if (deviceId) {
+            targetDevices = userDevices.filter(d => 
+                d.deviceId === deviceId || d.device_uid === deviceId || d._id.toString() === deviceId
+            );
+        }
+
+        const deviceIds = targetDevices.map(d => d._id);
+        const tasks = await Task.find({ device: { $in: deviceIds } })
+            .populate("staff device assignedBy")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const formatTimeIST = (d) => {
+            if (!d) return "N/A";
+            const date = new Date(d);
+            if (isNaN(date.getTime())) return "N/A";
+            return date.toLocaleString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                day: "2-digit", month: "short", year: "numeric",
+                hour: "2-digit", minute: "2-digit", hour12: true
+            });
+        };
+
+        const PDFDocument = require("pdfkit");
+        const doc = new PDFDocument({ margin: 30, size: 'A4' });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="sinexus_performance_report_${Date.now()}.pdf"`);
+        doc.pipe(res);
+
+        // Header Section
+        doc.fillColor('#1E293B').fontSize(18).text('SINEXUS Monitoring System', { align: 'center' });
+        doc.fillColor('#0284C7').fontSize(14).text('Operational Performance & Multi-Attempt Cleaning Audit Report', { align: 'center' });
+        doc.moveDown(0.5);
+
+        doc.fillColor('#475569').fontSize(10).text(`Generated By: ${generatedBy} (${userId}) | Period: ${formatTimeIST(fromDate)} to ${formatTimeIST(tillDate)}`, { align: 'center' });
+        doc.moveDown(1);
+
+        // Summary Boxes
+        doc.fillColor('#0F172A').fontSize(12).text('Operational Summary:', { underline: true });
+        doc.fontSize(10).fillColor('#334155');
+        doc.text(`Total Target Facilities: ${targetDevices.length}`);
+        doc.text(`Total Cleaning Tasks Executed: ${tasks.length}`);
+        doc.text(`Verified Clean Tasks: ${tasks.filter(t => ["VERIFIED", "COMPLETED", "RESOLVED"].includes(t.status)).length}`);
+        doc.text(`Total Multi-Cycle Reassignments: ${tasks.reduce((acc, t) => acc + (t.attempts && t.attempts.length > 1 ? t.attempts.length - 1 : 0), 0)}`);
+        doc.moveDown(1.5);
+
+        // Tasks & Multi-Attempt Breakdown Table Header
+        doc.fillColor('#0F172A').fontSize(12).text('Detailed Cleaning Tasks & Attempt History:', { underline: true });
+        doc.moveDown(0.5);
+
+        for (const t of tasks) {
+            const devLoc = t.device ? (t.device.location || t.device.deviceId || "Restroom") : "Restroom";
+            const taskTitle = t.taskName || t.title || "Restroom Cleaning";
+            const mainStaff = t.staff ? (t.staff.name || t.staff.userId || "Staff") : "Unassigned";
+
+            doc.fillColor('#0284C7').fontSize(10).text(`Facility: ${devLoc} | Task: ${taskTitle} | Assigned Staff: ${mainStaff}`);
+            doc.fillColor('#475569').fontSize(9).text(`Status: ${t.status} | Total Attempts: ${t.attempts ? t.attempts.length : (t.currentAttempt || 1)}`);
+
+            if (t.attempts && t.attempts.length > 0) {
+                for (const att of t.attempts) {
+                    const attStaff = att.staffName || mainStaff;
+                    const attStatus = att.status || "SUBMITTED";
+                    const attStart = formatTimeIST(att.startedAt || t.startedAt);
+                    const attSub = formatTimeIST(att.submittedAt || t.submittedAt);
+                    const attDur = att.durationMins ? (`${att.durationMins} mins`) : "N/A";
+                    const photoCount = att.photos ? att.photos.length : 0;
+                    const remarks = att.adminRemarks ? (` | Remarks: "${att.adminRemarks}"`) : "";
+
+                    doc.fillColor(attStatus === 'REJECTED' ? '#DC2626' : (attStatus === 'VERIFIED' ? '#16A34A' : '#D97706'))
+                       .fontSize(8)
+                       .text(`   - Attempt ${att.attemptNumber || 1} [${attStatus}]: Staff: ${attStaff} | Start: ${attStart} | Submitted: ${attSub} | Duration: ${attDur} | Photos: ${photoCount}${remarks}`);
+                }
+            } else {
+                const attStart = formatTimeIST(t.startedAt);
+                const attSub = formatTimeIST(t.submittedAt);
+                const attDur = t.durationMins ? (`${t.durationMins} mins`) : "N/A";
+                const photoCount = t.cleaningPhotos ? t.cleaningPhotos.length : 0;
+                doc.fillColor('#475569').fontSize(8).text(`   - Attempt 1 [${t.status}]: Staff: ${mainStaff} | Start: ${attStart} | Submitted: ${attSub} | Duration: ${attDur} | Photos: ${photoCount}`);
+            }
+            doc.moveDown(0.5);
+        }
+
+        doc.end();
     } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
+        console.error("Error generating PDF report:", error);
+        return res.status(500).json({ success: false, message: "Server Error generating PDF report" });
     }
 };
 
