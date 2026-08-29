@@ -167,6 +167,8 @@ const getAlerts = async (req, res) => {
                 alertItem.submittedAt = task.submittedAt;
                 alertItem.completedAt = task.completedAt;
                 alertItem.verifiedAt = task.verifiedAt;
+                alertItem.attempts = task.attempts || [];
+                alertItem.timeline = task.timeline || [];
                 if (task.staff) {
                     alertItem.staffId = task.staff._id ? task.staff._id.toString() : task.staff.toString();
                     alertItem.assignedStaffName = task.staff.name;

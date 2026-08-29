@@ -156,6 +156,16 @@ const startTask = async (req, res) => {
             }
         }
         
+        const currentAttemptNum = task.currentAttempt || 1;
+        if (!Array.isArray(task.attempts)) task.attempts = [];
+        let attemptRecord = task.attempts.find(a => a.attemptNumber === currentAttemptNum);
+        if (!attemptRecord) {
+            attemptRecord = { attemptNumber: currentAttemptNum, staff: task.staff };
+            task.attempts.push(attemptRecord);
+        }
+        attemptRecord.startedAt = now;
+        attemptRecord.status = "IN_PROGRESS";
+
         task.timeline.push({
             status: "IN_PROGRESS",
             timestamp: now,
@@ -679,6 +689,7 @@ const reassignTask = async (req, res) => {
                 taskProgressPercent: 0,
                 taskCleaningPhotos: [],
                 assignedStaff: staff._id,
+                reassignedAt: now,
                 startedAt: null,
                 submittedAt: null,
                 photosUploadedAt: null,
