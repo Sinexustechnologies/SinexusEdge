@@ -1,3 +1,4 @@
+const ConsentLog = require("../models/ConsentLog");
 const mongoose = require("mongoose");
 const User = require("../models/User");
 const Device = require("../models/Device");
@@ -106,6 +107,11 @@ const registerStaff = async (req, res) => {
             designation: designation || "Cleaning Staff",
             assignedDevice: device ? device._id : null,
             password: hashedPassword,
+            termsAccepted: true,
+            termsAcceptedAt: acceptedAt,
+            termsVersion: currentVersion,
+            privacyAccepted: true,
+            privacyAcceptedAt: acceptedAt,
             isVerified: true
         });
 
@@ -116,6 +122,16 @@ const registerStaff = async (req, res) => {
             device.assignedStaff = staff._id;
             await device.save();
         }
+
+        await ConsentLog.create({
+            userId: staff._id,
+            userType: "staff",
+            termsVersion: currentVersion,
+            termsAcceptedAt: acceptedAt,
+            privacyAcceptedAt: acceptedAt,
+            ipAddress: req.ip || req.headers['x-forwarded-for'],
+            userAgent: req.headers['user-agent']
+        });
 
         res.status(201).json({
             success: true,

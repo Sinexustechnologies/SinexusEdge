@@ -1,3 +1,4 @@
+const ConsentLog = require("../models/ConsentLog");
 const User = require("../models/User");
 const Otp = require("../models/Otp");
 
@@ -39,6 +40,19 @@ const generateUniqueAdminId = async (adminNameInput, companyNameInput) => {
 
 const registerAdmin = async (req, res, next) => {
     try {
+        const { acceptedTermsAt, termsVersion, termsAccepted, privacyAccepted } = req.body;
+        const isTermsAccepted = termsAccepted === true || Boolean(acceptedTermsAt);
+        const isPrivacyAccepted = privacyAccepted === true || Boolean(acceptedTermsAt);
+
+        if (!isTermsAccepted || !isPrivacyAccepted) {
+            return res.status(400).json({
+                success: false,
+                message: "You must accept the Terms & Conditions and Privacy Policy to create an account."
+            });
+        }
+        const acceptedAt = acceptedTermsAt ? new Date(acceptedTermsAt) : new Date();
+        const currentVersion = termsVersion || process.env.CURRENT_TERMS_VERSION || "1.0";
+
         const {
             userId: providedUserId,
             adminName,
@@ -116,7 +130,12 @@ const registerAdmin = async (req, res, next) => {
                     mobile: mobile || "",
                     alternateNumber,
                     password: hashedPassword,
-                    isVerified: true
+                    isVerified: true,
+                    termsAccepted: true,
+                    termsAcceptedAt: acceptedAt,
+                    termsVersion: currentVersion,
+                    privacyAccepted: true,
+                    privacyAcceptedAt: acceptedAt
                 });
             } catch (createErr) {
                 if (createErr.code === 11000 && createErr.keyPattern && createErr.keyPattern.userId) {
@@ -130,6 +149,18 @@ const registerAdmin = async (req, res, next) => {
         }
 
         await Otp.deleteMany({ email: normalizedEmail });
+
+        if (admin && admin._id) {
+            await ConsentLog.create({
+                userId: admin._id,
+                userType: "admin",
+                termsVersion: currentVersion,
+                termsAcceptedAt: acceptedAt,
+                privacyAcceptedAt: acceptedAt,
+                ipAddress: req.ip || req.headers['x-forwarded-for'],
+                userAgent: req.headers['user-agent']
+            });
+        }
 
         res.status(201).json({
             success: true,
@@ -221,6 +252,11 @@ const login = async (req, res, next) => {
             process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
+
+        
+        const currentTermsVersion = process.env.CURRENT_TERMS_VERSION || "1.0";
+        const requiresTermsReacceptance = !user.termsAccepted ||
+            (user.termsVersion !== currentTermsVersion && user.termsVersion !== "legacy-backfill");
 
         const { fcmToken } = req.body;
         if (fcmToken) {
@@ -368,7 +404,53 @@ const updateProfile = async (req, res, next) => {
     }
 };
 
+
+const acceptTerms = async (req, res, next) => {
+    try {
+        const { termsVersion } = req.body;
+        const currentVersion = termsVersion || process.env.CURRENT_TERMS_VERSION || "1.0";
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        const now = new Date();
+        user.termsAccepted = true;
+        user.termsAcceptedAt = now;
+        user.termsVersion = currentVersion;
+        user.privacyAccepted = true;
+        user.privacyAcceptedAt = now;
+        await user.save();
+
+        await ConsentLog.create({
+            userId: user._id,
+            userType: user.role || "admin",
+            termsVersion: currentVersion,
+            termsAcceptedAt: now,
+            privacyAcceptedAt: now,
+            ipAddress: req.ip || req.headers['x-forwarded-for'],
+            userAgent: req.headers['user-agent']
+        });
+
+        res.status(200).json({
+            success: true,
+            message: "Terms & Conditions and Privacy Policy accepted successfully",
+            user: {
+                id: user._id,
+                termsAccepted: user.termsAccepted,
+                termsAcceptedAt: user.termsAcceptedAt,
+                termsVersion: user.termsVersion,
+                privacyAccepted: user.privacyAccepted,
+                privacyAcceptedAt: user.privacyAcceptedAt
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
+    acceptTerms,
     registerAdmin,
     login,
     refresh,

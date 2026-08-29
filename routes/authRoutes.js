@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 
 const {
+    acceptTerms,
     registerAdmin,
     login,
     refresh,
@@ -50,5 +51,7 @@ router.put(
     authMiddleware,
     updateProfile
 );
+
+router.post("/accept-terms", verifyToken, acceptTerms);
 
 module.exports = router;
