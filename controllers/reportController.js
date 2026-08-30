@@ -52,18 +52,18 @@ const parseAndValidateReportDateRange = (reqQuery) => {
 // Admin Scoped Helper
 const getReportUserInfo = async (userObj) => {
     let generatedBy = "Admin";
-    let userId = "ADM002";
+    let userId = "N/A";
     if (userObj && userObj.id) {
         const dbUser = await User.findById(userObj.id).lean();
         if (dbUser) {
-            generatedBy = dbUser.name || dbUser.contactPerson || dbUser.companyName || dbUser.email || "Astika Sinha";
+            generatedBy = dbUser.name || dbUser.contactPerson || dbUser.companyName || dbUser.email || "Admin";
             if (dbUser.role === "admin") {
-                userId = dbUser.userId || dbUser.empId || "ADM002";
+                userId = dbUser.userId || dbUser.empId || "N/A";
             } else if (dbUser.adminId) {
                 const adminUser = await User.findById(dbUser.adminId).lean();
-                userId = adminUser ? (adminUser.userId || adminUser.empId || "ADM002") : (dbUser.userId || "ADM002");
+                userId = adminUser ? (adminUser.userId || adminUser.empId || "N/A") : (dbUser.userId || "N/A");
             } else {
-                userId = dbUser.userId || dbUser.empId || "ADM002";
+                userId = dbUser.userId || dbUser.empId || "N/A";
             }
         } else {
             userId = userObj.id;
@@ -229,14 +229,14 @@ const getReportStats = async (req, res) => {
                 ratingCount++;
             }
         }
-        const avgRatingVal = ratingCount > 0 ? parseFloat((sumRating / ratingCount).toFixed(1)) : 5.0;
+        const avgRatingVal = ratingCount > 0 ? parseFloat((sumRating / ratingCount).toFixed(1)) : "N/A";
 
         const completedTasksList = await Task.find({
             device: { $in: deviceIds },
             status: { $in: ["COMPLETED", "VERIFIED", "RESOLVED"] }
         }).select("createdAt completedAt verifiedAt startedAt assignedAt").lean();
 
-        let avgResponseStr = "15m";
+        let avgResponseStr = "N/A";
         if (completedTasksList.length > 0) {
             let totalDiffMs = 0;
             let validTaskCount = 0;
@@ -278,11 +278,11 @@ const getReportsList = async (req, res) => {
         const { devices } = await getAdminDeviceScope(req.user);
         const reports = devices.map(d => ({
             id: "rep_" + d._id,
-            title: (d.deviceId || d.device_uid) + " Performance Report",
+            title: (d.deviceId || d.device_uid || "Device") + " Performance Report",
             date: new Date().toISOString().split("T")[0],
             status: "ready",
-            deviceId: d.deviceId || d.device_uid,
-            location: d.location || "Main Restroom"
+            deviceId: d.deviceId || d.device_uid || "N/A",
+            location: d.location || "N/A"
         }));
         res.status(200).json({ success: true, reports });
     } catch (error) {
@@ -307,106 +307,6 @@ const compileReportDataset = async (req) => {
     }
     const { fromDate, tillDate } = dateRangeResult;
     const { deviceId } = req.query;
-
-    const { generatedBy, userId } = await getReportUserInfo(req.user);
-    const { devices: userDevices } = await getAdminDeviceScope(req.user);
-
-    let targetDevices = userDevices;
-    if (deviceId) {
-        targetDevices = userDevices.filter(d => 
-            d.deviceId === deviceId || d.device_uid === deviceId || d._id.toString() === deviceId
-        );
-    }
-
-    if (targetDevices.length === 0) {
-        return {
-            fromDate,
-            tillDate,
-            reportSummary: {
-                period: fromDate.toISOString().split("T")[0] + " till " + tillDate.toISOString().split("T")[0],
-                adminName: generatedBy,
-                adminId: userId,
-                totalDevices: 0,
-                totalRatings: 0,
-                averageRating: 0,
-                totalAlerts: 0,
-                criticalAlerts: 0,
-                needAttentionAlerts: 0,
-                totalCleaningTasks: 0,
-                completedCleaningTasks: 0
-            },
-            reports: []
-        };
-    }
-
-    const deviceIds = targetDevices.map(d => d._id);
-    const deviceUids = targetDevices.map(d => d.device_uid);
-    const deviceCustomIds = targetDevices.map(d => d.deviceId).filter(Boolean);
-    const allIdentifiers = Array.from(new Set([...deviceUids, ...deviceCustomIds]));
-
-    const getNum = (obj, keys, defaultVal = 0) => {
-        if (!obj) return defaultVal;
-        for (const k of keys) {
-            if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "" && !isNaN(Number(obj[k]))) {
-                return Number(obj[k]);
-            }
-        }
-        return defaultVal;
-    };
-
-    const [allSensorLogs, allParticularRatings, allAlerts, allTasks] = await Promise.all([
-        SensorData.find({
-            $or: [
-                { device_uid: { $in: allIdentifiers } },
-                { deviceId: { $in: allIdentifiers } },
-                { device: { $in: deviceIds } }
-            ]
-        }).sort({ createdAt: -1, timestamp: -1 }).lean(),
-
-        ParticularRating.find({
-            $or: [
-                { device_uid: { $in: allIdentifiers } },
-                { deviceId: { $in: allIdentifiers } },
-                { device: { $in: deviceIds } }
-            ]
-        }).sort({ createdAt: -1, timestamp: -1 }).lean(),
-
-        Alert.find({
-            $or: [
-                { device_uid: { $in: allIdentifiers } },
-                { deviceId: { $in: allIdentifiers } },
-                { device: { $in: deviceIds } }
-            ]
-        }).sort({ createdAt: -1 }).lean(),
-
-        Task.find({
-            $or: [
-                { device: { $in: deviceIds } },
-                { device_uid: { $in: allIdentifiers } },
-                { deviceId: { $in: allIdentifiers } }
-            ]
-        }).populate("staff assignedBy timeline.updatedBy").sort({ createdAt: -1 }).lean()
-    ]);
-
-    const [allLatestStatuses, allOpenAlerts, adminSettings] = await Promise.all([
-        LatestDeviceStatus.find({
-            $or: [
-                { device_uid: { $in: allIdentifiers } },
-                { deviceId: { $in: allIdentifiers } },
-                { device: { $in: deviceIds } }
-            ]
-        }).lean(),
-        Alert.find({
-            $or: [
-                { device_uid: { $in: allIdentifiers } },
-                { deviceId: { $in: allIdentifiers } },
-                { device: { $in: deviceIds } }
-            ],
-            status: { $in: ["OPEN", "ASSIGNED"] }
-        }).lean(),
-        Settings.findOne({ adminId: req.user ? req.user.id : null }).lean()
-    ]);
-    const userSettings = adminSettings || { counterThreshold: 100, odorThreshold: 200 };
 
     const formatDateStr = (d) => {
         if (!d) return "";
@@ -434,31 +334,126 @@ const compileReportDataset = async (req) => {
         });
     };
 
-    const isInRange = (itemDate) => {
-        if (!itemDate) return true;
-        const d = new Date(itemDate);
-        if (isNaN(d.getTime())) return true;
-        return d >= fromDate && d <= tillDate;
+    const { generatedBy, userId } = await getReportUserInfo(req.user);
+    const { devices: userDevices } = await getAdminDeviceScope(req.user);
+
+    let targetDevices = userDevices;
+    if (deviceId) {
+        targetDevices = userDevices.filter(d => 
+            d.deviceId === deviceId || d.device_uid === deviceId || d._id.toString() === deviceId
+        );
+    }
+
+    if (targetDevices.length === 0) {
+        return {
+            fromDate,
+            tillDate,
+            reportSummary: {
+                period: formatDateStr(fromDate) + " till " + formatDateStr(tillDate),
+                adminName: generatedBy,
+                adminId: userId,
+                totalDevices: 0,
+                totalRatings: 0,
+                averageRating: "N/A",
+                totalAlerts: 0,
+                criticalAlerts: 0,
+                needAttentionAlerts: 0,
+                totalCleaningTasks: 0,
+                completedCleaningTasks: 0,
+                totalUpdations: 0
+            },
+            reports: []
+        };
+    }
+
+    const deviceIds = targetDevices.map(d => d._id);
+    const deviceUids = targetDevices.map(d => d.device_uid);
+    const deviceCustomIds = targetDevices.map(d => d.deviceId).filter(Boolean);
+    const allIdentifiers = Array.from(new Set([...deviceUids, ...deviceCustomIds]));
+
+    const getNum = (obj, keys, defaultVal = null) => {
+        if (!obj) return defaultVal;
+        for (const k of keys) {
+            if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "" && !isNaN(Number(obj[k]))) {
+                return Number(obj[k]);
+            }
+        }
+        return defaultVal;
     };
 
-    const rangeSensorLogs = allSensorLogs.filter(l => isInRange(l.createdAt || l.timestamp));
-    const rangeParticularRatings = allParticularRatings.filter(r => isInRange(r.createdAt || r.timestamp));
-    const rangeAlerts = allAlerts.filter(a => isInRange(a.createdAt));
-    const rangeTasks = allTasks.filter(t => isInRange(t.createdAt || t.assignedAt));
+    // Query DB strictly within selected date range
+    const [allSensorLogs, allParticularRatings, allAlerts, allTasks, allLatestStatuses] = await Promise.all([
+        SensorData.find({
+            $or: [
+                { device_uid: { $in: allIdentifiers } },
+                { deviceId: { $in: allIdentifiers } },
+                { device: { $in: deviceIds } }
+            ],
+            $or: [
+                { createdAt: { $gte: fromDate, $lte: tillDate } },
+                { timestamp: { $gte: fromDate, $lte: tillDate } }
+            ]
+        }).sort({ createdAt: -1, timestamp: -1 }).lean(),
 
-    const activeParticularRatings = rangeParticularRatings.length > 0 ? rangeParticularRatings : allParticularRatings;
-    let overallTotalRatings = activeParticularRatings.length;
-    let overallSumRating = activeParticularRatings.reduce((acc, r) => acc + getNum(r, ["particularRating", "rating"], 5.0), 0);
-    let overallAverageRating = overallTotalRatings > 0 ? parseFloat((overallSumRating / overallTotalRatings).toFixed(2)) : 5.0;
+        ParticularRating.find({
+            $or: [
+                { device_uid: { $in: allIdentifiers } },
+                { deviceId: { $in: allIdentifiers } },
+                { device: { $in: deviceIds } }
+            ],
+            $or: [
+                { createdAt: { $gte: fromDate, $lte: tillDate } },
+                { timestamp: { $gte: fromDate, $lte: tillDate } }
+            ]
+        }).sort({ createdAt: -1, timestamp: -1 }).lean(),
 
-    const activeAlerts = rangeAlerts.length > 0 ? rangeAlerts : allAlerts;
-    let totalAlertsCount = activeAlerts.length;
-    let criticalAlertsCount = activeAlerts.filter(a => (a.alertCategory || a.alertType || "").toLowerCase().includes("critical")).length;
-    let needAttentionAlertsCount = activeAlerts.filter(a => (a.alertCategory || a.alertType || "").toLowerCase().includes("attention")).length;
+        Alert.find({
+            $or: [
+                { device_uid: { $in: allIdentifiers } },
+                { deviceId: { $in: allIdentifiers } },
+                { device: { $in: deviceIds } }
+            ],
+            createdAt: { $gte: fromDate, $lte: tillDate }
+        }).sort({ createdAt: -1 }).lean(),
 
-    const activeTasks = rangeTasks.length > 0 ? rangeTasks : allTasks;
-    let totalCleaningTasksCount = activeTasks.length;
-    let completedCleaningTasksCount = activeTasks.filter(t => ["COMPLETED", "VERIFIED", "RESOLVED"].includes(t.status)).length;
+        Task.find({
+            $or: [
+                { device: { $in: deviceIds } },
+                { device_uid: { $in: allIdentifiers } },
+                { deviceId: { $in: allIdentifiers } }
+            ],
+            $or: [
+                { createdAt: { $gte: fromDate, $lte: tillDate } },
+                { assignedAt: { $gte: fromDate, $lte: tillDate } },
+                { submittedAt: { $gte: fromDate, $lte: tillDate } }
+            ]
+        }).populate("staff assignedBy timeline.updatedBy").sort({ createdAt: -1 }).lean(),
+
+        LatestDeviceStatus.find({
+            $or: [
+                { device_uid: { $in: allIdentifiers } },
+                { deviceId: { $in: allIdentifiers } },
+                { device: { $in: deviceIds } }
+            ]
+        }).lean()
+    ]);
+
+    // Aggregate summary for all target devices within date range
+    let overallTotalRatings = allParticularRatings.length;
+    let overallSumRating = allParticularRatings.reduce((acc, r) => {
+        const val = getNum(r, ["particularRating", "rating"], null);
+        return val !== null ? acc + val : acc;
+    }, 0);
+    let validRatingCount = allParticularRatings.filter(r => getNum(r, ["particularRating", "rating"], null) !== null).length;
+    let overallAverageRating = validRatingCount > 0 ? `${parseFloat((overallSumRating / validRatingCount).toFixed(2))} / 5.0` : "N/A";
+
+    let totalAlertsCount = allAlerts.length;
+    let criticalAlertsCount = allAlerts.filter(a => (a.alertCategory || a.alertType || "").toLowerCase().includes("critical")).length;
+    let needAttentionAlertsCount = allAlerts.filter(a => (a.alertCategory || a.alertType || "").toLowerCase().includes("attention")).length;
+
+    let totalCleaningTasksCount = allTasks.length;
+    let completedCleaningTasksCount = allTasks.filter(t => ["COMPLETED", "VERIFIED", "RESOLVED"].includes(t.status)).length;
+    let totalUpdations = allTasks.reduce((acc, t) => acc + (t.updateCount || 1), 0);
 
     const reports = targetDevices.map(device => {
         const devUid = device.device_uid;
@@ -473,21 +468,77 @@ const compileReportDataset = async (req) => {
             return false;
         };
 
-        const devLogsAll = allSensorLogs.filter(isDevMatch);
-        const devParticularRatingsAll = allParticularRatings.filter(isDevMatch);
-        const devAlertsAll = allAlerts.filter(isDevMatch);
-        const devTasksAll = allTasks.filter(isDevMatch);
+        const devLogs = allSensorLogs.filter(isDevMatch);
+        const devParticularRatings = allParticularRatings.filter(isDevMatch);
+        const devAlerts = allAlerts.filter(isDevMatch);
+        const devTasks = allTasks.filter(isDevMatch);
 
-        const devLogs = devLogsAll.filter(l => isInRange(l.createdAt || l.timestamp));
-        const devParticularRatings = devParticularRatingsAll.filter(r => isInRange(r.createdAt || r.timestamp));
-        const devAlerts = devAlertsAll.filter(a => isInRange(a.createdAt));
-        const devTasks = devTasksAll.filter(t => isInRange(t.createdAt || t.assignedAt));
+        const latestDevStatus = allLatestStatuses.find(s => isDevMatch(s));
 
-        const effectiveParticularRatings = devParticularRatings.length > 0 ? devParticularRatings : devParticularRatingsAll;
-        const effectiveLogs = devLogs.length > 0 ? devLogs : devLogsAll;
-        const effectiveAlerts = devAlerts.length > 0 ? devAlerts : devAlertsAll;
-        const effectiveTasks = devTasks.length > 0 ? devTasks : devTasksAll;
+        // Key Telemetry Summary
+        let avgRating24h = "N/A";
+        let periodAvgRating = "N/A";
+        if (devParticularRatings.length > 0) {
+            const validRatings = devParticularRatings.map(r => getNum(r, ["particularRating", "rating"], null)).filter(v => v !== null);
+            if (validRatings.length > 0) {
+                const sum = validRatings.reduce((acc, v) => acc + v, 0);
+                const avg = parseFloat((sum / validRatings.length).toFixed(2));
+                avgRating24h = `${avg} / 5.0`;
+                periodAvgRating = `${avg} / 5.0`;
+            }
+        }
 
+        let avgOdor24h = "N/A";
+        let periodAvgOdor = "N/A";
+        if (devLogs.length > 0) {
+            const validOdors = devLogs.map(l => getNum(l, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], null)).filter(v => v !== null);
+            if (validOdors.length > 0) {
+                const sum = validOdors.reduce((acc, v) => acc + v, 0);
+                const avg = Math.round(sum / validOdors.length);
+                avgOdor24h = `${avg} PPM`;
+                periodAvgOdor = `${avg} PPM`;
+            }
+        }
+
+        let totalUsage24h = "N/A";
+        let periodTotalUsage = "N/A";
+        if (devLogs.length > 0) {
+            const counters = devLogs.map(l => getNum(l, ["Counter", "counterValue", "CounterValue", "counter"], null)).filter(v => v !== null);
+            if (counters.length > 0) {
+                const minC = Math.min(...counters);
+                const maxC = Math.max(...counters);
+                const diff = Math.max(0, maxC - minC);
+                totalUsage24h = `${diff} Entries`;
+                periodTotalUsage = `${diff} Entries`;
+            }
+        }
+
+        // Assigned Staff
+        let assignedStaffStr = "N/A";
+        if (device.assignedStaff) {
+            const sName = device.assignedStaff.name || device.assignedStaff.contactPerson;
+            const sEmp = device.assignedStaff.empId || device.assignedStaff.userId;
+            if (sName && sEmp) assignedStaffStr = `${sName} (${sEmp})`;
+            else if (sName) assignedStaffStr = sName;
+        } else if (devTasks.length > 0) {
+            const taskWithStaff = devTasks.find(t => t.staff && t.staff.name);
+            if (taskWithStaff) {
+                const sName = taskWithStaff.staff.name;
+                const sEmp = taskWithStaff.staff.empId || taskWithStaff.staff.userId;
+                assignedStaffStr = sEmp ? `${sName} (${sEmp})` : sName;
+            }
+        }
+
+        // Last Cleaned Timestamp
+        let lastCleanedTimestamp = "N/A";
+        const completedTask = devTasks.find(t => ["VERIFIED", "COMPLETED", "RESOLVED"].includes(t.status) && (t.completedAt || t.verifiedAt || t.submittedAt));
+        if (completedTask) {
+            lastCleanedTimestamp = formatTimeStr(completedTask.completedAt || completedTask.verifiedAt || completedTask.submittedAt);
+        } else if (latestDevStatus && (latestDevStatus.lastCleanedAt || latestDevStatus.updatedAt)) {
+            lastCleanedTimestamp = formatTimeStr(latestDevStatus.lastCleanedAt || latestDevStatus.updatedAt);
+        }
+
+        // Daily Telemetry & Maintenance History Table
         const dateMap = new Map();
         let dIter1 = new Date(fromDate);
         const dEnd1 = new Date(tillDate);
@@ -496,64 +547,84 @@ const compileReportDataset = async (req) => {
         while (dIter1 <= dEnd1) {
             const dStr = formatDateStr(dIter1);
             if (dStr && !dateMap.has(dStr)) {
-                dateMap.set(dStr, { totalRatings: 0, sumPR: 0, sumCR: 0, sumOR: 0, sumFR: 0 });
+                dateMap.set(dStr, { totalRatings: 0, sumPR: 0 });
             }
             dIter1.setDate(dIter1.getDate() + 1);
         }
-        effectiveParticularRatings.forEach(r => {
-            const dateKey = r.date || formatDateStr(r.timestamp || r.createdAt);
-            if (!dateKey) return;
-            if (!dateMap.has(dateKey)) {
-                dateMap.set(dateKey, { totalRatings: 0, sumPR: 0, sumCR: 0, sumOR: 0, sumFR: 0 });
-            }
-            const dayObj = dateMap.get(dateKey);
-            const cVal = getNum(r, ["counterValue", "Counter", "CounterValue", "counter"]);
-            const oVal = getNum(r, ["odorValue", "OdorSensVal", "OdorLevel", "odor"]);
-            const fVal = getNum(r, ["customerFeedback", "feedbackRating", "feedback"], 5);
-            const pRating = getNum(r, ["particularRating", "rating"], 5.0);
-            const details = calculateParticularRatingDetails(cVal, oVal, fVal);
 
-            dayObj.totalRatings++;
-            dayObj.sumPR += pRating;
-            dayObj.sumCR += details.counterRating;
-            dayObj.sumOR += details.odorRating;
-            dayObj.sumFR += details.feedbackRating;
+        devParticularRatings.forEach(r => {
+            const dateKey = r.date || formatDateStr(r.timestamp || r.createdAt);
+            if (!dateKey || !dateMap.has(dateKey)) return;
+            const pRating = getNum(r, ["particularRating", "rating"], null);
+            if (pRating !== null) {
+                const dayObj = dateMap.get(dateKey);
+                dayObj.totalRatings++;
+                dayObj.sumPR += pRating;
+            }
         });
 
         const usageMap = new Map();
-        effectiveLogs.forEach(l => {
+        devLogs.forEach(l => {
             const dateKey = l.date || formatDateStr(l.timestamp || l.createdAt);
             if (!dateKey) return;
-            const cVal = getNum(l, ["Counter", "counterValue", "CounterValue", "counter"]);
-            if (!usageMap.has(dateKey)) {
-                usageMap.set(dateKey, { min: cVal, max: cVal });
-            } else {
-                const uObj = usageMap.get(dateKey);
-                if (cVal < uObj.min) uObj.min = cVal;
-                if (cVal > uObj.max) uObj.max = cVal;
+            const cVal = getNum(l, ["Counter", "counterValue", "CounterValue", "counter"], null);
+            if (cVal !== null) {
+                if (!usageMap.has(dateKey)) {
+                    usageMap.set(dateKey, { min: cVal, max: cVal });
+                } else {
+                    const uObj = usageMap.get(dateKey);
+                    if (cVal < uObj.min) uObj.min = cVal;
+                    if (cVal > uObj.max) uObj.max = cVal;
+                }
             }
         });
 
         const dailyRatingTable = Array.from(dateMap.entries()).map(([dateStr, dObj]) => {
-            const devDayLogs = effectiveLogs.filter(l => (l.date || formatDateStr(l.timestamp || l.createdAt)) === dateStr);
-            let dayOdorPpm = 42;
+            const devDayLogs = devLogs.filter(l => (l.date || formatDateStr(l.timestamp || l.createdAt)) === dateStr);
+            let dayOdorPpm = "N/A";
             if (devDayLogs.length > 0) {
-                const odorSum = devDayLogs.reduce((acc, l) => acc + getNum(l, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], 0), 0);
-                dayOdorPpm = Math.round(odorSum / devDayLogs.length);
+                const odorVals = devDayLogs.map(l => getNum(l, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], null)).filter(v => v !== null);
+                if (odorVals.length > 0) {
+                    const odorSum = odorVals.reduce((acc, v) => acc + v, 0);
+                    dayOdorPpm = `${Math.round(odorSum / odorVals.length)} PPM`;
+                }
             }
+
             const dayUsage = usageMap.get(dateStr);
-            const usageCounter = dayUsage ? Math.max(0, dayUsage.max - dayUsage.min) : 187;
-            const avgStar = dObj.totalRatings > 0 ? parseFloat((dObj.sumPR / dObj.totalRatings).toFixed(2)) : 3.15;
+            const usageCounter = dayUsage ? Math.max(0, dayUsage.max - dayUsage.min) : "N/A";
+
+            const avgStar = dObj.totalRatings > 0 ? parseFloat((dObj.sumPR / dObj.totalRatings).toFixed(2)) : "N/A";
+
+            const dayTasks = devTasks.filter(t => formatDateStr(t.createdAt || t.assignedAt || t.submittedAt) === dateStr && ["COMPLETED", "VERIFIED", "RESOLVED"].includes(t.status));
 
             return {
                 date: dateStr,
                 averageParticularRating: avgStar,
                 odorPpm: dayOdorPpm,
                 usageCounter,
-                cleaningCount: 1
+                cleaningCount: dayTasks.length
             };
         });
 
+        // Staff Cleaning Audit Trail
+        const staffCleaningAuditTrail = [];
+        devTasks.forEach(t => {
+            const sName = t.staff ? (t.staff.name || t.staff.contactPerson) : (device.assignedStaff ? device.assignedStaff.name : "N/A");
+            const sUserId = t.staff ? (t.staff.userId || t.staff._id?.toString()) : (device.assignedStaff ? device.assignedStaff.userId : "N/A");
+            const sEmpId = t.staff ? (t.staff.empId || t.staff.userId) : (device.assignedStaff ? device.assignedStaff.empId : "N/A");
+            const assignedTime = formatTimeStr(t.assignedAt || t.createdAt);
+            const completionTime = formatTimeStr(t.completedAt || t.verifiedAt || t.submittedAt);
+            
+            staffCleaningAuditTrail.push({
+                staffName: sName || "N/A",
+                systemUserId: sUserId || "N/A",
+                empId: sEmpId || "N/A",
+                assignedTime,
+                completionTime
+            });
+        });
+
+        // Daily Task Submission & Admin Verification Summary
         const taskDateMap = new Map();
         let dIter2 = new Date(fromDate);
         const dEnd2 = new Date(tillDate);
@@ -566,61 +637,50 @@ const compileReportDataset = async (req) => {
             }
             dIter2.setDate(dIter2.getDate() + 1);
         }
-        effectiveTasks.forEach(t => {
+
+        devTasks.forEach(t => {
             const dateKey = formatDateStr(t.createdAt || t.assignedAt || t.submittedAt);
-            if (!dateKey) return;
-            if (!taskDateMap.has(dateKey)) {
-                taskDateMap.set(dateKey, []);
+            if (dateKey && taskDateMap.has(dateKey)) {
+                taskDateMap.get(dateKey).push(t);
             }
-            const sName = t.staff ? (t.staff.name || "Astikatwo") : "Astikatwo";
-            const sEmpId = t.staff ? (t.staff.empId || t.staff.userId || "EMP001") : "EMP001";
-            const sUserId = t.staff ? (t.staff.userId || "STF002") : "STF002";
-            const assignedTime = formatTimeStr(t.assignedAt || t.createdAt);
-            const completionTime = formatTimeStr(t.completedAt || t.verifiedAt || t.submittedAt) || "Aug 19, 2026, 01:59 PM";
-
-            taskDateMap.get(dateKey).push({
-                taskId: t._id.toString(),
-                title: t.taskName || t.title || "Cleaning Task Clean CRITICAL",
-                staffName: sName,
-                staffEmpId: sEmpId,
-                staffUserId: sUserId,
-                assignedTime,
-                completionTime,
-                status: t.status || "VERIFIED"
-            });
         });
 
-        const staffCleaningAuditTrail = [];
-        effectiveTasks.forEach(t => {
-            const sName = t.staff ? (t.staff.name || "Astikatwo") : (device.assignedStaff ? device.assignedStaff.name : "Astikatwo");
-            const sUserId = t.staff ? (t.staff.userId || "STF002") : (device.assignedStaff ? device.assignedStaff.userId : "STF002");
-            const sEmpId = t.staff ? (t.staff.empId || t.staff.userId || "EMP001") : (device.assignedStaff ? device.assignedStaff.empId : "EMP001");
-            const assignedTime = formatTimeStr(t.assignedAt || t.createdAt) || "Aug 19, 2026, 01:40 PM";
-            const completionTime = formatTimeStr(t.completedAt || t.verifiedAt || t.submittedAt) || "Aug 19, 2026, 01:59 PM";
-            
-            staffCleaningAuditTrail.push({
-                staffName: sName,
-                systemUserId: sUserId,
-                empId: sEmpId,
-                assignedTime,
-                completionTime
+        const dailyTaskSummary = Array.from(taskDateMap.entries()).map(([dateStr, tList]) => {
+            const submitted = tList.filter(t => ["SUBMITTED", "VERIFIED", "COMPLETED", "RESOLVED"].includes(t.status)).length;
+            const verified = tList.filter(t => ["VERIFIED", "RESOLVED"].includes(t.status)).length;
+            const pending = tList.filter(t => ["ASSIGNED", "IN_PROGRESS", "SUBMITTED"].includes(t.status) && !["VERIFIED", "RESOLVED"].includes(t.status)).length;
+
+            const staffCounts = {};
+            tList.forEach(t => {
+                const name = t.staff ? (t.staff.name || t.staff.contactPerson) : "N/A";
+                staffCounts[name] = (staffCounts[name] || 0) + 1;
             });
+            const staffBreakdownStr = Object.keys(staffCounts).length > 0 
+                ? Object.entries(staffCounts).map(([s, c]) => `${s}: ${c} tasks`).join("; ")
+                : "N/A";
+
+            return {
+                date: dateStr,
+                submitted,
+                verified,
+                pending,
+                staffBreakdown: staffBreakdownStr
+            };
         });
 
+        const totalStaffSubmittedTasks = devTasks.filter(t => ["SUBMITTED", "VERIFIED", "COMPLETED", "RESOLVED"].includes(t.status)).length;
+        const totalAdminVerifiedTasks = devTasks.filter(t => ["VERIFIED", "RESOLVED"].includes(t.status)).length;
+        const pendingVerification = devTasks.filter(t => ["ASSIGNED", "IN_PROGRESS", "SUBMITTED"].includes(t.status) && !["VERIFIED", "RESOLVED"].includes(t.status)).length;
+
+        // Alert & Task Lifecycle Timestamp Audit Trail
         const alertTaskAuditTrail = [];
-        effectiveAlerts.forEach(a => {
-            const matchedTask = effectiveTasks.find(t => t.alert && t.alert.toString() === a._id.toString());
-            const cat = (a.alertCategory || a.alertType || "CRITICAL").toUpperCase();
-            const cVal = getNum(a, ["Counter", "counterValue", "CounterValue", "counter"], 287);
-            const oVal = getNum(a, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], 37);
-            const fVal = getNum(a, ["feedback", "customerFeedback", "feedbackRating"], 1);
-
-            let titleDesc = a.description || `Critical: Counter value is ${cVal}, exceeding threshold of 50 by ${cVal - 50}. Odor value is ${oVal} ppm, exceeding threshold of 8 ppm by ${oVal - 8} ppm.`;
-            if (cat.includes("ATTENTION")) {
-                titleDesc = `Need Attention: Customer feedback rating is ${fVal}, indicating Need Attention.`;
-            }
-            const sName = matchedTask && matchedTask.staff ? `${matchedTask.staff.name} (${matchedTask.staff.empId || matchedTask.staff.userId})` : "Staff Member (N/A)";
-            const updatesStr = `${a.updateCount || (matchedTask ? matchedTask.updateCount : 1) || 1} Updates`;
+        devAlerts.forEach(a => {
+            const matchedTask = devTasks.find(t => t.alert && t.alert.toString() === a._id.toString());
+            const cat = (a.alertCategory || a.alertType || "ALERT").toUpperCase();
+            
+            let titleDesc = a.description || a.title || "Alert Triggered";
+            const sName = matchedTask && matchedTask.staff ? `${matchedTask.staff.name || matchedTask.staff.contactPerson} (${matchedTask.staff.empId || matchedTask.staff.userId || 'N/A'})` : "N/A";
+            const updatesStr = `${a.updateCount || (matchedTask ? matchedTask.updateCount : 0) || 0} Updates`;
 
             alertTaskAuditTrail.push({
                 date: formatDateStr(a.createdAt),
@@ -632,138 +692,54 @@ const compileReportDataset = async (req) => {
                 verified: matchedTask ? formatTimeStr(matchedTask.verifiedAt) : "N/A",
                 staff: sName,
                 updates: updatesStr,
-                status: matchedTask ? matchedTask.status : (a.status || "VERIFIED")
+                status: matchedTask ? matchedTask.status : (a.status || "N/A")
             });
         });
 
-        effectiveTasks.forEach(t => {
+        devTasks.forEach(t => {
             if (!t.alert) {
-                const sName = t.staff ? `${t.staff.name} (${t.staff.empId || t.staff.userId})` : "Astikatwo (EMP001)";
-                const devLocation = device.location || "Gardenia Square, Crossings Republik, Ghaziabad, Uttar Pradesh 201016, India - Floor F1";
+                const sName = t.staff ? `${t.staff.name || t.staff.contactPerson} (${t.staff.empId || t.staff.userId || 'N/A'})` : "N/A";
+                const devLocation = device.location || "N/A";
                 alertTaskAuditTrail.push({
-                    date: formatDateStr(t.createdAt),
+                    date: formatDateStr(t.createdAt || t.assignedAt),
                     category: "CLEANING TASK",
-                    title: `Cleaning Task Clean CRITICAL ${devLocation}`,
-                    created: formatTimeStr(t.createdAt) || "Aug 19, 2026, 01:40 PM",
-                    started: formatTimeStr(t.startedAt) || "Aug 19, 2026, 01:54 PM",
-                    submitted: formatTimeStr(t.submittedAt) || "Aug 19, 2026, 01:55 PM",
-                    verified: formatTimeStr(t.verifiedAt) || "Aug 19, 2026, 01:59 PM",
+                    title: t.taskName || t.title || (devLocation !== "N/A" ? `Cleaning Task at ${devLocation}` : "Cleaning Task"),
+                    created: formatTimeStr(t.createdAt || t.assignedAt),
+                    started: formatTimeStr(t.startedAt),
+                    submitted: formatTimeStr(t.submittedAt),
+                    verified: formatTimeStr(t.verifiedAt || t.completedAt),
                     staff: sName,
-                    updates: "1 Update",
-                    status: t.status || "VERIFIED"
+                    updates: `${t.updateCount || 0} Updates`,
+                    status: t.status || "N/A"
                 });
             }
         });
 
-        let status = "Need Attention";
-        const activeAlertsForDev = allOpenAlerts.filter(isDevMatch);
-        if (activeAlertsForDev.length > 0) {
-            const hasCritical = activeAlertsForDev.some(a => {
-                const cat = (a.alertCategory || a.alertType || a.toiletStatus || "").toLowerCase();
-                return cat.includes("critical");
-            });
-            status = hasCritical ? "Critical" : "Need Attention";
-        }
-
-        let avgRating24h = "3.15 / 5.0";
-        if (effectiveParticularRatings.length > 0) {
-            const sum = effectiveParticularRatings.reduce((acc, r) => acc + getNum(r, ["particularRating", "rating"], 5.0), 0);
-            avgRating24h = `${parseFloat((sum / effectiveParticularRatings.length).toFixed(2))} / 5.0`;
-        }
-
-        let avgOdor24h = "42 PPM";
-        if (effectiveLogs.length > 0) {
-            const sum = effectiveLogs.reduce((acc, l) => acc + getNum(l, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], 0), 0);
-            avgOdor24h = `${Math.round(sum / effectiveLogs.length)} PPM`;
-        }
-
-        let totalUsage24h = "863 Entries";
-
-        const completedTasks = effectiveTasks.filter(t => ["COMPLETED", "VERIFIED", "RESOLVED", "SUBMITTED"].includes(t.status));
-        const latestCleanedTask = completedTasks.length > 0 ? completedTasks[0] : (effectiveTasks.length > 0 ? effectiveTasks[0] : null);
-
-        let lastCleanedTimestamp = "Aug 19, 2026, 01:59 PM";
-        let staffName = device.assignedStaff ? (device.assignedStaff.name || "Astikatwo") : "Astikatwo";
-        let staffId = device.assignedStaff ? (device.assignedStaff.empId || device.assignedStaff.userId || "EMP001") : "EMP001";
-        let staffUserId = device.assignedStaff ? (device.assignedStaff.userId || "STF002") : "STF002";
-        let staffEmpId = device.assignedStaff ? (device.assignedStaff.empId || "EMP001") : "EMP001";
-
-        if (latestCleanedTask) {
-            const cTime = latestCleanedTask.completedAt || latestCleanedTask.verifiedAt || latestCleanedTask.submittedAt || latestCleanedTask.updatedAt || latestCleanedTask.createdAt;
-            if (cTime) {
-                lastCleanedTimestamp = formatTimeStr(cTime);
-            }
-            if (latestCleanedTask.staff) {
-                staffName = latestCleanedTask.staff.name || staffName;
-                staffUserId = latestCleanedTask.staff.userId || staffUserId;
-                staffEmpId = latestCleanedTask.staff.empId || staffEmpId;
-            }
-        }
-
-        const totalStaffSubmittedTasks = effectiveTasks.filter(t => ["SUBMITTED", "COMPLETED", "VERIFIED", "RESOLVED"].includes(t.status)).length;
-        const totalAdminVerifiedTasks = effectiveTasks.filter(t => ["VERIFIED", "RESOLVED"].includes(t.status)).length;
-        const pendingVerification = effectiveTasks.filter(t => t.status === "SUBMITTED").length;
-
-        const dailyTaskSummary = Array.from(taskDateMap.entries()).map(([dateStr, tasksList]) => {
-            const submitted = tasksList.filter(t => ["SUBMITTED", "COMPLETED", "VERIFIED", "RESOLVED"].includes(t.status)).length;
-            const verified = tasksList.filter(t => ["VERIFIED", "RESOLVED"].includes(t.status)).length;
-            const pending = tasksList.filter(t => t.status === "SUBMITTED").length;
-
-            const staffMap = new Map();
-            tasksList.forEach(t => {
-                const sName = t.staffName || "Astikatwo";
-                const sEmp = t.staffEmpId || "EMP001";
-                const key = `${sName} (${sEmp})`;
-                if (!staffMap.has(key)) {
-                    staffMap.set(key, { key, submitted: 0, verified: 0 });
-                }
-                const sObj = staffMap.get(key);
-                if (["SUBMITTED", "COMPLETED", "VERIFIED", "RESOLVED"].includes(t.status)) sObj.submitted++;
-                if (["VERIFIED", "RESOLVED"].includes(t.status)) sObj.verified++;
-            });
-
-            const staffBreakdownStr = Array.from(staffMap.values()).map(s => `${s.key} (Sub: ${s.submitted || 1}, Ver: ${s.verified || 1})`).join("; ") || `${staffName} (${staffEmpId}) (Sub: 1, Ver: 1)`;
-
-            return {
-                date: dateStr,
-                submitted: submitted || 1,
-                verified: verified || 1,
-                pending: pending || 0,
-                staffBreakdown: staffBreakdownStr
-            };
-        });
+        const devStatusStr = device.status || (latestDevStatus ? latestDevStatus.status : "N/A");
 
         return {
             deviceInfo: {
                 id: devId,
-                deviceId: devCustomId || devUid || "CITYMALL-F1-01",
-                location: device.location || "Gardenia Square, Crossings Republik, Ghaziabad, Uttar Pradesh 201016, India - Floor F1",
-                status: status || "Need Attention"
+                deviceId: devCustomId || devUid || "N/A",
+                location: device.location || "N/A",
+                status: devStatusStr
             },
             keyTelemetrySummary: {
                 avgRating24h,
                 avgOdor24h,
                 totalUsage24h,
-                periodAvgRating: avgRating24h,
-                periodAvgOdor: avgOdor24h,
-                periodTotalUsage: totalUsage24h,
-                assignedStaff: `${staffName} (${staffEmpId})`,
+                periodAvgRating,
+                periodAvgOdor,
+                periodTotalUsage,
+                assignedStaff: assignedStaffStr,
                 lastCleaned: lastCleanedTimestamp
             },
             dailyRatingTable,
-            staffCleaningAuditTrail: staffCleaningAuditTrail.length > 0 ? staffCleaningAuditTrail : [
-                {
-                    staffName: "Astikatwo",
-                    systemUserId: "STF002",
-                    empId: "EMP001",
-                    assignedTime: "Aug 19, 2026, 01:40 PM",
-                    completionTime: "Aug 19, 2026, 01:59 PM"
-                }
-            ],
+            staffCleaningAuditTrail,
             taskVerificationSummaryCounters: {
-                submitted: totalStaffSubmittedTasks || 1,
-                verified: totalAdminVerifiedTasks || 1,
-                pending: pendingVerification || 0
+                submitted: totalStaffSubmittedTasks,
+                verified: totalAdminVerifiedTasks,
+                pending: pendingVerification
             },
             dailyTaskSummary,
             alertTaskAuditTrail
@@ -782,7 +758,7 @@ const compileReportDataset = async (req) => {
         needAttentionAlerts: needAttentionAlertsCount,
         totalCleaningTasks: totalCleaningTasksCount,
         completedCleaningTasks: completedCleaningTasksCount,
-        totalUpdations: activeTasks.reduce((acc, t) => acc + (t.updateCount || 1), 0)
+        totalUpdations
     };
 
     return {
@@ -849,20 +825,27 @@ const downloadReportCsv = async (req, res) => {
         // Section 3: Daily History
         csvRows.push(["=== DAILY TELEMETRY & MAINTENANCE HISTORY ==="]);
         csvRows.push(["Date", "Avg Star Rating", "Odor Level", "Usage Counter", "Cleaning Frequency"]);
-        if (r && r.dailyRatingTable) {
+        if (r && r.dailyRatingTable && r.dailyRatingTable.length > 0) {
             r.dailyRatingTable.forEach(d => {
-                csvRows.push([d.date, `${d.averageParticularRating} / 5.0`, `${d.odorPpm} PPM`, d.usageCounter, `${d.cleaningCount} Times`]);
+                const starStr = d.averageParticularRating !== "N/A" ? `${d.averageParticularRating} / 5.0` : "N/A";
+                const odorStr = d.odorPpm !== "N/A" ? d.odorPpm : "N/A";
+                const usageStr = d.usageCounter !== "N/A" ? d.usageCounter : "N/A";
+                csvRows.push([d.date, starStr, odorStr, usageStr, `${d.cleaningCount} Times`]);
             });
+        } else {
+            csvRows.push(["No telemetry or rating data recorded for the selected period"]);
         }
         csvRows.push([]);
 
         // Section 4: Staff Audit Trail
         csvRows.push(["=== STAFF CLEANING AUDIT TRAIL ==="]);
         csvRows.push(["Staff Name", "System User ID", "Emp ID", "Assigned Time", "Completion Time"]);
-        if (r && r.staffCleaningAuditTrail) {
+        if (r && r.staffCleaningAuditTrail && r.staffCleaningAuditTrail.length > 0) {
             r.staffCleaningAuditTrail.forEach(s => {
                 csvRows.push([s.staffName, s.systemUserId, s.empId, s.assignedTime, s.completionTime]);
             });
+        } else {
+            csvRows.push(["No staff audit trail data recorded for the selected period"]);
         }
         csvRows.push([]);
 
@@ -874,20 +857,24 @@ const downloadReportCsv = async (req, res) => {
             csvRows.push(["Pending Verification", r.taskVerificationSummaryCounters.pending]);
         }
         csvRows.push(["Date", "Submitted", "Verified", "Pending", "Staff Breakdown"]);
-        if (r && r.dailyTaskSummary) {
+        if (r && r.dailyTaskSummary && r.dailyTaskSummary.length > 0) {
             r.dailyTaskSummary.forEach(ts => {
                 csvRows.push([ts.date, `${ts.submitted} Tasks`, `${ts.verified} Tasks`, `${ts.pending} Tasks`, ts.staffBreakdown]);
             });
+        } else {
+            csvRows.push(["No task submission summary data for the selected period"]);
         }
         csvRows.push([]);
 
         // Section 6: Alert & Task Lifecycle Timestamp Audit Trail
         csvRows.push(["=== DATE-WISE ALERT & TASK LIFECYCLE TIMESTAMP AUDIT TRAIL ==="]);
         csvRows.push(["Date", "Category & Title", "Created", "Started", "Submitted", "Verified", "Staff", "Updates", "Status"]);
-        if (r && r.alertTaskAuditTrail) {
+        if (r && r.alertTaskAuditTrail && r.alertTaskAuditTrail.length > 0) {
             r.alertTaskAuditTrail.forEach(al => {
                 csvRows.push([al.date, `${al.category}: ${al.title}`, al.created, al.started, al.submitted, al.verified, al.staff, al.updates, al.status]);
             });
+        } else {
+            csvRows.push(["No alert or task audit trail data recorded for the selected period"]);
         }
 
         const csvContent = csvRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -982,7 +969,7 @@ const downloadReportPdf = async (req, res) => {
             ["Report Selected Period", reportSummary.period],
             ["Generated By Admin", `${reportSummary.adminName} (ID: ${reportSummary.adminId})`],
             ["Restroom / Device Unit", r ? `${r.deviceInfo.location} (ID: ${r.deviceInfo.deviceId})` : "N/A"],
-            ["Current Device Status", r ? r.deviceInfo.status : "Need Attention"],
+            ["Current Device Status", r ? r.deviceInfo.status : "N/A"],
             ["Report Generated Time", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(",", "")]
         ];
 
@@ -1001,9 +988,9 @@ const downloadReportPdf = async (req, res) => {
         y = drawSectionHeader("Key Telemetry & Operational Summary", y);
 
         const kt = r ? r.keyTelemetrySummary : {
-            avgRating24h: "3.15 / 5.0", avgOdor24h: "42 PPM", totalUsage24h: "863 Entries",
-            periodAvgRating: "3.15 / 5.0", periodAvgOdor: "42 PPM", periodTotalUsage: "863 Entries",
-            assignedStaff: "Astikatwo (EMP001)", lastCleaned: "Aug 19, 2026, 01:59 PM"
+            avgRating24h: "N/A", avgOdor24h: "N/A", totalUsage24h: "N/A",
+            periodAvgRating: "N/A", periodAvgOdor: "N/A", periodTotalUsage: "N/A",
+            assignedStaff: "N/A", lastCleaned: "N/A"
         };
 
         y = renderCardRow([
@@ -1023,39 +1010,50 @@ const downloadReportPdf = async (req, res) => {
             { label: "LAST CLEANED TIMESTAMP", value: kt.lastCleaned }
         ], y);
 
-        y += 6;
+        y += 10;
 
-        // Section 3: Daily Telemetry History
+        // Section 3: Daily Telemetry & Maintenance History
         y = drawSectionHeader("Daily Telemetry & Maintenance History", y);
 
-        const dailyHeaders = ["Date", "Avg Star Rating", "Odor Level", "Usage Counter", "Cleaning Frequency"];
-        const dailyWidths = [90, 100, 100, 110, contentWidth - 400];
+        const dailyTableHeaders = ["Date", "Avg Star Rating", "Odor Level", "Usage Counter", "Cleaning Frequency"];
+        const dailyTableWidths = [95, 105, 105, 105, contentWidth - 410];
 
         doc.rect(margin, y, contentWidth, 18).fill("#1E293B");
         doc.fillColor("#FFFFFF").fontSize(8).font("Helvetica-Bold");
-        let curX = margin;
-        dailyHeaders.forEach((h, idx) => {
-            const align = idx === 0 ? "left" : "center";
-            doc.text(h, curX + (idx === 0 ? 8 : 0), y + 5, { width: dailyWidths[idx], align });
-            curX += dailyWidths[idx];
+        let dx = margin;
+        dailyTableHeaders.forEach((h, idx) => {
+            doc.text(h, dx + 8, y + 5, { width: dailyTableWidths[idx] });
+            dx += dailyTableWidths[idx];
         });
         y += 18;
 
         const dailyRows = r ? r.dailyRatingTable : [];
-        dailyRows.forEach((row, idx) => {
-            const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
-            doc.rect(margin, y, contentWidth, 16).fill(rowBg);
-            doc.rect(margin, y, contentWidth, 16).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
-            
-            let x = margin;
-            doc.fillColor("#334155").fontSize(7.5).font("Helvetica");
-            doc.text(row.date, x + 8, y + 4, { width: dailyWidths[0] }); x += dailyWidths[0];
-            doc.text(row.averageParticularRating ? `${row.averageParticularRating} / 5.0` : "3.15 / 5.0", x, y + 4, { width: dailyWidths[1], align: "center" }); x += dailyWidths[1];
-            doc.text(row.odorPpm ? `${row.odorPpm} PPM` : "42 PPM", x, y + 4, { width: dailyWidths[2], align: "center" }); x += dailyWidths[2];
-            doc.text(String(row.usageCounter || 187), x, y + 4, { width: dailyWidths[3], align: "center" }); x += dailyWidths[3];
-            doc.text(`${row.cleaningCount || 1} Times`, x, y + 4, { width: dailyWidths[4], align: "center" });
-            y += 16;
-        });
+        if (dailyRows.length > 0) {
+            dailyRows.forEach((row, idx) => {
+                const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
+                doc.rect(margin, y, contentWidth, 18).fill(rowBg);
+                doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+                
+                let x = margin;
+                doc.fillColor("#334155").fontSize(7.5).font("Helvetica");
+                doc.text(row.date, x + 8, y + 5, { width: dailyTableWidths[0] }); x += dailyTableWidths[0];
+                
+                const starStr = row.averageParticularRating !== "N/A" ? `${row.averageParticularRating} / 5.0` : "N/A";
+                const odorStr = row.odorPpm !== "N/A" ? row.odorPpm : "N/A";
+                const usageStr = row.usageCounter !== "N/A" ? String(row.usageCounter) : "N/A";
+
+                doc.text(starStr, x + 8, y + 5, { width: dailyTableWidths[1] }); x += dailyTableWidths[1];
+                doc.text(odorStr, x + 8, y + 5, { width: dailyTableWidths[2] }); x += dailyTableWidths[2];
+                doc.text(usageStr, x + 8, y + 5, { width: dailyTableWidths[3] }); x += dailyTableWidths[3];
+                doc.text(`${row.cleaningCount} Times`, x + 8, y + 5, { width: dailyTableWidths[4] });
+                y += 18;
+            });
+        } else {
+            doc.rect(margin, y, contentWidth, 18).fill("#FFFFFF");
+            doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+            doc.fillColor("#64748B").fontSize(7.5).font("Helvetica").text("No telemetry or rating records found for the selected date range", margin + 8, y + 5);
+            y += 18;
+        }
 
         // PAGE 2 BUILD: Staff Cleaning Audit Trail
         doc.addPage();
@@ -1063,7 +1061,7 @@ const downloadReportPdf = async (req, res) => {
         y = drawSectionHeader("Staff Cleaning Audit Trail", y);
 
         const staffAuditHeaders = ["Staff Name", "System User ID", "Emp ID", "Assigned Time", "Completion Time"];
-        const staffAuditWidths = [100, 90, 80, 126, contentWidth - 396];
+        const staffAuditWidths = [125, 95, 85, 110, contentWidth - 415];
 
         doc.rect(margin, y, contentWidth, 18).fill("#1E293B");
         doc.fillColor("#FFFFFF").fontSize(8).font("Helvetica-Bold");
@@ -1075,27 +1073,34 @@ const downloadReportPdf = async (req, res) => {
         y += 18;
 
         const staffRows = r ? r.staffCleaningAuditTrail : [];
-        staffRows.forEach((sr, idx) => {
-            const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
-            doc.rect(margin, y, contentWidth, 18).fill(rowBg);
+        if (staffRows.length > 0) {
+            staffRows.forEach((sr, idx) => {
+                const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
+                doc.rect(margin, y, contentWidth, 18).fill(rowBg);
+                doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+                
+                let x = margin;
+                doc.fillColor("#334155").fontSize(7.5).font("Helvetica");
+                doc.text(sr.staffName, x + 8, y + 5, { width: staffAuditWidths[0] }); x += staffAuditWidths[0];
+                doc.text(sr.systemUserId, x, y + 5, { width: staffAuditWidths[1] }); x += staffAuditWidths[1];
+                doc.text(sr.empId, x, y + 5, { width: staffAuditWidths[2] }); x += staffAuditWidths[2];
+                doc.text(sr.assignedTime, x, y + 5, { width: staffAuditWidths[3] }); x += staffAuditWidths[3];
+                doc.text(sr.completionTime, x, y + 5, { width: staffAuditWidths[4] });
+                y += 18;
+            });
+        } else {
+            doc.rect(margin, y, contentWidth, 18).fill("#FFFFFF");
             doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
-            
-            let x = margin;
-            doc.fillColor("#334155").fontSize(7.5).font("Helvetica");
-            doc.text(sr.staffName, x + 8, y + 5, { width: staffAuditWidths[0] }); x += staffAuditWidths[0];
-            doc.text(sr.systemUserId, x, y + 5, { width: staffAuditWidths[1] }); x += staffAuditWidths[1];
-            doc.text(sr.empId, x, y + 5, { width: staffAuditWidths[2] }); x += staffAuditWidths[2];
-            doc.text(sr.assignedTime, x, y + 5, { width: staffAuditWidths[3] }); x += staffAuditWidths[3];
-            doc.text(sr.completionTime, x, y + 5, { width: staffAuditWidths[4] });
+            doc.fillColor("#64748B").fontSize(7.5).font("Helvetica").text("No staff cleaning audit trail records found for the selected date range", margin + 8, y + 5);
             y += 18;
-        });
+        }
 
         // PAGE 3 BUILD: Task Submission & Verification Summary + Audit Trail
         doc.addPage();
         y = 36;
         y = drawSectionHeader("Daily Task Submission & Admin Verification Summary", y);
 
-        const taskCounters = r ? r.taskVerificationSummaryCounters : { submitted: 1, verified: 1, pending: 0 };
+        const taskCounters = r ? r.taskVerificationSummaryCounters : { submitted: 0, verified: 0, pending: 0 };
         
         y = renderCardRow([
             { label: "STAFF SUBMITTED TASKS", value: String(taskCounters.submitted) },
@@ -1120,20 +1125,27 @@ const downloadReportPdf = async (req, res) => {
         y += 18;
 
         const subRows = r ? r.dailyTaskSummary : [];
-        subRows.forEach((tr, idx) => {
-            const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
-            doc.rect(margin, y, contentWidth, 18).fill(rowBg);
+        if (subRows.length > 0) {
+            subRows.forEach((tr, idx) => {
+                const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
+                doc.rect(margin, y, contentWidth, 18).fill(rowBg);
+                doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+                
+                let x = margin;
+                doc.fillColor("#334155").fontSize(7.5).font("Helvetica");
+                doc.text(tr.date, x + 8, y + 5, { width: subWidths[0] }); x += subWidths[0];
+                doc.text(`${tr.submitted} Tasks`, x + 8, y + 5, { width: subWidths[1] }); x += subWidths[1];
+                doc.text(`${tr.verified} Tasks`, x + 8, y + 5, { width: subWidths[2] }); x += subWidths[2];
+                doc.text(`${tr.pending} Tasks`, x + 8, y + 5, { width: subWidths[3] }); x += subWidths[3];
+                doc.text(tr.staffBreakdown, x + 8, y + 5, { width: subWidths[4] });
+                y += 18;
+            });
+        } else {
+            doc.rect(margin, y, contentWidth, 18).fill("#FFFFFF");
             doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
-            
-            let x = margin;
-            doc.fillColor("#334155").fontSize(7.5).font("Helvetica");
-            doc.text(tr.date, x + 8, y + 5, { width: subWidths[0] }); x += subWidths[0];
-            doc.text(`${tr.submitted} Tasks`, x + 8, y + 5, { width: subWidths[1] }); x += subWidths[1];
-            doc.text(`${tr.verified} Tasks`, x + 8, y + 5, { width: subWidths[2] }); x += subWidths[2];
-            doc.text(`${tr.pending} Tasks`, x + 8, y + 5, { width: subWidths[3] }); x += subWidths[3];
-            doc.text(tr.staffBreakdown, x + 8, y + 5, { width: subWidths[4] });
+            doc.fillColor("#64748B").fontSize(7.5).font("Helvetica").text("No task submission records found for the selected date range", margin + 8, y + 5);
             y += 18;
-        });
+        }
 
         y += 16;
 
@@ -1153,49 +1165,56 @@ const downloadReportPdf = async (req, res) => {
         y += 18;
 
         const alertRows = r ? r.alertTaskAuditTrail : [];
-        alertRows.forEach((ar, idx) => {
-            if (y > 740) {
-                doc.addPage();
-                y = 36;
-                y = drawSectionHeader("Date-Wise Alert & Task Lifecycle Timestamp Audit Trail (Contd.)", y);
+        if (alertRows.length > 0) {
+            alertRows.forEach((ar, idx) => {
+                if (y > 740) {
+                    doc.addPage();
+                    y = 36;
+                    y = drawSectionHeader("Date-Wise Alert & Task Lifecycle Timestamp Audit Trail (Contd.)", y);
+                    
+                    doc.rect(margin, y, contentWidth, 18).fill("#1E293B");
+                    doc.fillColor("#FFFFFF").fontSize(7.5).font("Helvetica-Bold");
+                    let tx = margin;
+                    auditTrailHeaders.forEach((h, hidx) => {
+                        doc.text(h, tx + (hidx === 0 ? 4 : 2), y + 5, { width: auditTrailWidths[hidx] });
+                        tx += auditTrailWidths[hidx];
+                    });
+                    y += 18;
+                }
+
+                const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
+                const titleLen = (ar.title || "").length;
+                const rowH = Math.max(24, Math.ceil(titleLen / 36) * 10 + 12);
+
+                doc.rect(margin, y, contentWidth, rowH).fill(rowBg);
+                doc.rect(margin, y, contentWidth, rowH).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+
+                let x = margin;
+                doc.fillColor("#334155").fontSize(7).font("Helvetica");
+                doc.text(ar.date, x + 4, y + 4, { width: auditTrailWidths[0] }); x += auditTrailWidths[0];
                 
-                doc.rect(margin, y, contentWidth, 18).fill("#1E293B");
-                doc.fillColor("#FFFFFF").fontSize(7.5).font("Helvetica-Bold");
-                let tx = margin;
-                auditTrailHeaders.forEach((h, hidx) => {
-                    doc.text(h, tx + (hidx === 0 ? 4 : 2), y + 5, { width: auditTrailWidths[hidx] });
-                    tx += auditTrailWidths[hidx];
-                });
-                y += 18;
-            }
+                doc.font("Helvetica-Bold").text(ar.category, x + 2, y + 4, { width: auditTrailWidths[1] });
+                doc.font("Helvetica").text(ar.title, x + 2, y + 13, { width: auditTrailWidths[1] }); x += auditTrailWidths[1];
+                
+                doc.text(ar.created, x + 2, y + 4, { width: auditTrailWidths[2] }); x += auditTrailWidths[2];
+                doc.text(ar.started, x + 2, y + 4, { width: auditTrailWidths[3] }); x += auditTrailWidths[3];
+                doc.text(ar.submitted, x + 2, y + 4, { width: auditTrailWidths[4] }); x += auditTrailWidths[4];
+                doc.text(ar.verified, x + 2, y + 4, { width: auditTrailWidths[5] }); x += auditTrailWidths[5];
+                doc.text(ar.staff, x + 2, y + 4, { width: auditTrailWidths[6] }); x += auditTrailWidths[6];
+                doc.text(ar.updates, x + 2, y + 4, { width: auditTrailWidths[7] }); x += auditTrailWidths[7];
 
-            const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
-            const titleLen = (ar.title || "").length;
-            const rowH = Math.max(24, Math.ceil(titleLen / 36) * 10 + 12);
+                const statusColor = ar.status === "VERIFIED" || ar.status === "RESOLVED" ? "#16A34A" :
+                                   (ar.status === "CRITICAL" ? "#DC2626" : "#2563EB");
+                doc.fillColor(statusColor).font("Helvetica-Bold").text(ar.status, x + 2, y + 4, { width: auditTrailWidths[8] });
 
-            doc.rect(margin, y, contentWidth, rowH).fill(rowBg);
-            doc.rect(margin, y, contentWidth, rowH).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
-
-            let x = margin;
-            doc.fillColor("#334155").fontSize(7).font("Helvetica");
-            doc.text(ar.date, x + 4, y + 4, { width: auditTrailWidths[0] }); x += auditTrailWidths[0];
-            
-            doc.font("Helvetica-Bold").text(ar.category, x + 2, y + 4, { width: auditTrailWidths[1] });
-            doc.font("Helvetica").text(ar.title, x + 2, y + 13, { width: auditTrailWidths[1] }); x += auditTrailWidths[1];
-            
-            doc.text(ar.created, x + 2, y + 4, { width: auditTrailWidths[2] }); x += auditTrailWidths[2];
-            doc.text(ar.started, x + 2, y + 4, { width: auditTrailWidths[3] }); x += auditTrailWidths[3];
-            doc.text(ar.submitted, x + 2, y + 4, { width: auditTrailWidths[4] }); x += auditTrailWidths[4];
-            doc.text(ar.verified, x + 2, y + 4, { width: auditTrailWidths[5] }); x += auditTrailWidths[5];
-            doc.text(ar.staff, x + 2, y + 4, { width: auditTrailWidths[6] }); x += auditTrailWidths[6];
-            doc.text(ar.updates, x + 2, y + 4, { width: auditTrailWidths[7] }); x += auditTrailWidths[7];
-
-            const statusColor = ar.status === "VERIFIED" || ar.status === "RESOLVED" ? "#16A34A" :
-                               (ar.status === "CRITICAL" ? "#DC2626" : "#2563EB");
-            doc.fillColor(statusColor).font("Helvetica-Bold").text(ar.status, x + 2, y + 4, { width: auditTrailWidths[8] });
-
-            y += rowH;
-        });
+                y += rowH;
+            });
+        } else {
+            doc.rect(margin, y, contentWidth, 18).fill("#FFFFFF");
+            doc.rect(margin, y, contentWidth, 18).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+            doc.fillColor("#64748B").fontSize(7.5).font("Helvetica").text("No alert or task audit trail records found for the selected date range", margin + 4, y + 5);
+            y += 18;
+        }
 
         // FOOTER WRAPPER FOR ALL PAGES
         const range = doc.bufferedPageRange();

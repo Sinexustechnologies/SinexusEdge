@@ -578,7 +578,7 @@ const rejectTask = async (req, res) => {
             const device = await Device.findById(task.device);
             const admin = await User.findById(req.user ? req.user.id : null);
             const notificationService = require("../services/notificationService");
-            await notificationService.sendTaskRejectedNotification(task, staff, admin, device, remarks);
+            notificationService.sendTaskRejectedNotification(task, staff, admin, device, remarks).catch(e => console.log("Task reject push err:", e.message));
         } catch (err) {
             console.log("Error sending task rejection notification:", err.message);
         }
@@ -713,7 +713,7 @@ const reassignTask = async (req, res) => {
             if (prevStaffId && oldStaffUser && !isSameStaff) {
                 await notificationService.sendTaskReassignedNotification(task, oldStaffUser, staff, device);
             } else {
-                await notificationService.sendTaskReassignedNotification(task, null, staff, device);
+                notificationService.sendTaskReassignedNotification(task, null, staff, device).catch(e => console.log("Task reassign push err:", e.message));
             }
         } catch (err) {
             console.log("Error sending task reassignment notification:", err.message);

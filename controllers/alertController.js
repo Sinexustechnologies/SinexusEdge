@@ -473,7 +473,7 @@ module.exports = {
 
             try {
                 const notificationService = require("../services/notificationService");
-                await notificationService.markNotificationsReadForAlert(alert._id);
+                notificationService.markNotificationsReadForAlert(alert._id).catch(e => console.log("Mark notifications read err:", e.message));
             } catch (err) {
                 console.log("Error marking notifications read:", err.message);
             }
@@ -755,9 +755,9 @@ module.exports = {
             try {
                 const notificationService = require("../services/notificationService");
                 if (isReassign) {
-                    await notificationService.sendTaskReassignedNotification(task, null, staff, device);
+                    notificationService.sendTaskReassignedNotification(task, null, staff, device).catch(e => console.log("Task reassign push err:", e.message));
                 } else {
-                    await notificationService.sendTaskAssignedNotification(task, staff, req.user, device);
+                    notificationService.sendTaskAssignedNotification(task, staff, req.user, device).catch(e => console.log("Task assign push err:", e.message));
                 }
             } catch (err) {
                 console.log("Error sending notification on assignAlert:", err.message);
