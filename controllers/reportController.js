@@ -729,19 +729,26 @@ const compileReportDataset = async (req) => {
                 submittedTime = formatTimeStr(matchedTask.submittedAt);
                 verifiedTime = formatTimeStr(matchedTask.verifiedAt || matchedTask.completedAt);
 
-                // Build rich attempt & timeline details
+                // Build rich attempt & reassignment lifecycle details dynamically from DB
                 if (matchedTask.timeline && Array.isArray(matchedTask.timeline) && matchedTask.timeline.length > 0) {
                     matchedTask.timeline.forEach(step => {
                         const stepTime = formatTimeStr(step.timestamp);
                         const notes = step.notes || "";
+                        const attemptNum = step.attemptNumber || 1;
+
                         if (step.status === "REJECTED") {
-                            if (notes) rejectionReasonStr += `[Rejected @ ${stepTime}]: ${notes} `;
+                            rejectionReasonStr += `[Attempt ${attemptNum} Rejected @ ${stepTime}]: ${notes || 'Rejected by Admin'} | `;
+                        } else if (step.status === "REASSIGNED") {
+                            rejectionReasonStr += `[Reassigned @ ${stepTime}]: ${notes || 'Task Reassigned'} | `;
+                        } else if (step.status === "VERIFIED" && notes) {
+                            rejectionReasonStr += `[Verified @ ${stepTime}]: ${notes} | `;
                         }
+
                         lifecycleTimeline.push({
                             status: step.status,
                             timestamp: stepTime,
                             notes: notes,
-                            attempt: step.attemptNumber || 1
+                            attempt: attemptNum
                         });
                     });
                 }
@@ -780,14 +787,21 @@ const compileReportDataset = async (req) => {
                     t.timeline.forEach(step => {
                         const stepTime = formatTimeStr(step.timestamp);
                         const notes = step.notes || "";
-                        if (step.status === "REJECTED" && notes) {
-                            rejectionReasonStr += `[Rejected @ ${stepTime}]: ${notes} `;
+                        const attemptNum = step.attemptNumber || 1;
+
+                        if (step.status === "REJECTED") {
+                            rejectionReasonStr += `[Attempt ${attemptNum} Rejected @ ${stepTime}]: ${notes || 'Rejected by Admin'} | `;
+                        } else if (step.status === "REASSIGNED") {
+                            rejectionReasonStr += `[Reassigned @ ${stepTime}]: ${notes || 'Task Reassigned'} | `;
+                        } else if (step.status === "VERIFIED" && notes) {
+                            rejectionReasonStr += `[Verified @ ${stepTime}]: ${notes} | `;
                         }
+
                         lifecycleTimeline.push({
                             status: step.status,
                             timestamp: stepTime,
                             notes: notes,
-                            attempt: step.attemptNumber || 1
+                            attempt: attemptNum
                         });
                     });
                 }
@@ -885,6 +899,21 @@ const getDeviceReports = async (req, res) => {
 const downloadReportCsv = async (req, res) => {
     try {
         const dataset = await compileReportDataset(req);
+        const {
+            incScope = "true",
+            incTelemetrySummary = "true",
+            incDailyTelemetry = "true",
+            incStaffAudit = "true",
+            incTaskSummary = "true",
+            incAlertAudit = "true"
+        } = req.query;
+
+        const showScope = incScope !== "false";
+        const showTelemetrySummary = incTelemetrySummary !== "false";
+        const showDailyTelemetry = incDailyTelemetry !== "false";
+        const showStaffAudit = incStaffAudit !== "false";
+        const showTaskSummary = incTaskSummary !== "false";
+        const showAlertAudit = incAlertAudit !== "false";
         if (dataset.error) {
             return res.status(400).json({ success: false, message: dataset.error });
         }
@@ -985,6 +1014,21 @@ const downloadReportCsv = async (req, res) => {
 const downloadReportPdf = async (req, res) => {
     try {
         const dataset = await compileReportDataset(req);
+        const {
+            incScope = "true",
+            incTelemetrySummary = "true",
+            incDailyTelemetry = "true",
+            incStaffAudit = "true",
+            incTaskSummary = "true",
+            incAlertAudit = "true"
+        } = req.query;
+
+        const showScope = incScope !== "false";
+        const showTelemetrySummary = incTelemetrySummary !== "false";
+        const showDailyTelemetry = incDailyTelemetry !== "false";
+        const showStaffAudit = incStaffAudit !== "false";
+        const showTaskSummary = incTaskSummary !== "false";
+        const showAlertAudit = incAlertAudit !== "false";
         if (dataset.error) {
             return res.status(400).json({ success: false, message: dataset.error });
         }
