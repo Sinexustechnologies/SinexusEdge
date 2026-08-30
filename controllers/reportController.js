@@ -554,13 +554,6 @@ const compileReportDataset = async (req) => {
             const sEmp = device.assignedStaff.empId || device.assignedStaff.userId;
             if (sName && sEmp) assignedStaffStr = `${sName} (${sEmp})`;
             else if (sName) assignedStaffStr = sName;
-        } else if (devTasks.length > 0) {
-            const taskWithStaff = devTasks.find(t => t.staff && t.staff.name);
-            if (taskWithStaff) {
-                const sName = taskWithStaff.staff.name;
-                const sEmp = taskWithStaff.staff.empId || taskWithStaff.staff.userId;
-                assignedStaffStr = sEmp ? `${sName} (${sEmp})` : sName;
-            }
         }
 
         // Last Cleaned Timestamp
