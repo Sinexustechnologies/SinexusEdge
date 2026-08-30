@@ -52,6 +52,6 @@ router.put(
     updateProfile
 );
 
-router.post("/accept-terms", verifyToken, acceptTerms);
+router.post("/accept-terms", authMiddleware, acceptTerms);
 
 module.exports = router;
