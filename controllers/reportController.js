@@ -706,45 +706,105 @@ const compileReportDataset = async (req) => {
         const totalAdminVerifiedTasks = devTasks.filter(t => ["VERIFIED", "RESOLVED"].includes(t.status)).length;
         const pendingVerification = devTasks.filter(t => ["ASSIGNED", "IN_PROGRESS", "SUBMITTED"].includes(t.status) && !["VERIFIED", "RESOLVED"].includes(t.status)).length;
 
-        // Alert & Task Lifecycle Timestamp Audit Trail
+        // Alert & Task Lifecycle Timestamp Audit Trail with Rich Attempts & Rejection History
         const alertTaskAuditTrail = [];
         devAlerts.forEach(a => {
             const matchedTask = devTasks.find(t => t.alert && t.alert.toString() === a._id.toString());
             const cat = (a.alertCategory || a.alertType || "ALERT").toUpperCase();
-            
             let titleDesc = a.description || a.title || "Alert Triggered";
-            const sName = matchedTask && matchedTask.staff ? `${matchedTask.staff.name || matchedTask.staff.contactPerson} (${matchedTask.staff.empId || matchedTask.staff.userId || 'N/A'})` : "N/A";
             const updatesStr = `${a.updateCount || (matchedTask ? matchedTask.updateCount : 0) || 0} Updates`;
+
+            let sName = "N/A";
+            let startedTime = "N/A";
+            let submittedTime = "N/A";
+            let verifiedTime = "N/A";
+            let rejectionReasonStr = "";
+            let lifecycleTimeline = [];
+
+            if (matchedTask) {
+                if (matchedTask.staff) {
+                    sName = `${matchedTask.staff.name || matchedTask.staff.contactPerson || 'Staff'} (${matchedTask.staff.empId || matchedTask.staff.userId || 'N/A'})`;
+                }
+                startedTime = formatTimeStr(matchedTask.startedAt);
+                submittedTime = formatTimeStr(matchedTask.submittedAt);
+                verifiedTime = formatTimeStr(matchedTask.verifiedAt || matchedTask.completedAt);
+
+                // Build rich attempt & timeline details
+                if (matchedTask.timeline && Array.isArray(matchedTask.timeline) && matchedTask.timeline.length > 0) {
+                    matchedTask.timeline.forEach(step => {
+                        const stepTime = formatTimeStr(step.timestamp);
+                        const notes = step.notes || "";
+                        if (step.status === "REJECTED") {
+                            if (notes) rejectionReasonStr += `[Rejected @ ${stepTime}]: ${notes} `;
+                        }
+                        lifecycleTimeline.push({
+                            status: step.status,
+                            timestamp: stepTime,
+                            notes: notes,
+                            attempt: step.attemptNumber || 1
+                        });
+                    });
+                }
+            }
+
+            const finalStatusStr = matchedTask ? matchedTask.status : (a.status || "N/A");
 
             alertTaskAuditTrail.push({
                 date: formatDateStr(a.createdAt),
                 category: cat,
                 title: titleDesc,
                 created: formatTimeStr(a.createdAt),
-                started: matchedTask ? formatTimeStr(matchedTask.startedAt) : "N/A",
-                submitted: matchedTask ? formatTimeStr(matchedTask.submittedAt) : "N/A",
-                verified: matchedTask ? formatTimeStr(matchedTask.verifiedAt) : "N/A",
+                started: startedTime,
+                submitted: submittedTime,
+                verified: verifiedTime,
                 staff: sName,
                 updates: updatesStr,
-                status: matchedTask ? matchedTask.status : (a.status || "N/A")
+                status: finalStatusStr,
+                rejectionReason: rejectionReasonStr.trim() || "N/A",
+                timeline: lifecycleTimeline
             });
         });
 
         devTasks.forEach(t => {
             if (!t.alert) {
-                const sName = t.staff ? `${t.staff.name || t.staff.contactPerson} (${t.staff.empId || t.staff.userId || 'N/A'})` : "N/A";
                 const devLocation = device.location || "N/A";
+                const cat = "CLEANING TASK";
+                const titleDesc = t.taskName || t.title || (devLocation !== "N/A" ? `Cleaning Task at ${devLocation}` : "Cleaning Task");
+                const sName = t.staff ? `${t.staff.name || t.staff.contactPerson || 'Staff'} (${t.staff.empId || t.staff.userId || 'N/A'})` : "N/A";
+                const updatesStr = `${t.updateCount || 0} Updates`;
+
+                let rejectionReasonStr = "";
+                let lifecycleTimeline = [];
+
+                if (t.timeline && Array.isArray(t.timeline) && t.timeline.length > 0) {
+                    t.timeline.forEach(step => {
+                        const stepTime = formatTimeStr(step.timestamp);
+                        const notes = step.notes || "";
+                        if (step.status === "REJECTED" && notes) {
+                            rejectionReasonStr += `[Rejected @ ${stepTime}]: ${notes} `;
+                        }
+                        lifecycleTimeline.push({
+                            status: step.status,
+                            timestamp: stepTime,
+                            notes: notes,
+                            attempt: step.attemptNumber || 1
+                        });
+                    });
+                }
+
                 alertTaskAuditTrail.push({
                     date: formatDateStr(t.createdAt || t.assignedAt),
-                    category: "CLEANING TASK",
-                    title: t.taskName || t.title || (devLocation !== "N/A" ? `Cleaning Task at ${devLocation}` : "Cleaning Task"),
+                    category: cat,
+                    title: titleDesc,
                     created: formatTimeStr(t.createdAt || t.assignedAt),
                     started: formatTimeStr(t.startedAt),
                     submitted: formatTimeStr(t.submittedAt),
                     verified: formatTimeStr(t.verifiedAt || t.completedAt),
                     staff: sName,
-                    updates: `${t.updateCount || 0} Updates`,
-                    status: t.status || "N/A"
+                    updates: updatesStr,
+                    status: t.status || "N/A",
+                    rejectionReason: rejectionReasonStr.trim() || "N/A",
+                    timeline: lifecycleTimeline
                 });
             }
         });
@@ -1187,7 +1247,7 @@ const downloadReportPdf = async (req, res) => {
         y = drawSectionHeader("Date-Wise Alert & Task Lifecycle Timestamp Audit Trail", y);
 
         const auditTrailHeaders = ["Date", "Category & Title", "Created", "Started", "Submitted", "Verified", "Staff", "Updates", "Status"];
-        const auditTrailWidths = [40, 175, 52, 45, 48, 48, 47, 33, 35];
+        const auditTrailWidths = [58, 157, 52, 45, 48, 48, 47, 35, 33];
 
         doc.rect(margin, y, contentWidth, 18).fill("#1E293B");
         doc.fillColor("#FFFFFF").fontSize(7.5).font("Helvetica-Bold");
