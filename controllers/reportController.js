@@ -695,9 +695,30 @@ const compileReportDataset = async (req) => {
             };
         });
 
-        const totalStaffSubmittedTasks = devTasks.filter(t => ["SUBMITTED", "VERIFIED", "COMPLETED", "RESOLVED"].includes(t.status)).length;
-        const totalAdminVerifiedTasks = devTasks.filter(t => ["VERIFIED", "RESOLVED"].includes(t.status)).length;
-        const pendingVerification = devTasks.filter(t => ["ASSIGNED", "IN_PROGRESS", "SUBMITTED"].includes(t.status) && !["VERIFIED", "RESOLVED"].includes(t.status)).length;
+        let totalStaffSubmittedTasks = 0;
+        let totalAdminVerifiedTasks = 0;
+        let totalRejectedTasks = 0;
+        let pendingVerification = 0;
+
+        devTasks.forEach(t => {
+            if (["VERIFIED", "RESOLVED", "COMPLETED"].includes(t.status)) {
+                totalAdminVerifiedTasks++;
+            }
+            if (["ASSIGNED", "IN_PROGRESS", "SUBMITTED"].includes(t.status) && !["VERIFIED", "RESOLVED", "COMPLETED"].includes(t.status)) {
+                pendingVerification++;
+            }
+
+            // Count submissions & rejections from timeline attempts
+            if (t.timeline && Array.isArray(t.timeline) && t.timeline.length > 0) {
+                const subSteps = t.timeline.filter(step => step.status === "SUBMITTED").length;
+                const rejSteps = t.timeline.filter(step => step.status === "REJECTED").length;
+                totalStaffSubmittedTasks += subSteps > 0 ? subSteps : 1;
+                totalRejectedTasks += rejSteps;
+            } else {
+                if (["SUBMITTED", "VERIFIED", "COMPLETED", "RESOLVED"].includes(t.status)) totalStaffSubmittedTasks++;
+                if (t.status === "REJECTED") totalRejectedTasks++;
+            }
+        });
 
         // Alert & Task Lifecycle Timestamp Audit Trail with Rich Attempts & Rejection History
         const alertTaskAuditTrail = [];
@@ -840,6 +861,7 @@ const compileReportDataset = async (req) => {
             taskVerificationSummaryCounters: {
                 submitted: totalStaffSubmittedTasks,
                 verified: totalAdminVerifiedTasks,
+                rejected: totalRejectedTasks,
                 pending: pendingVerification
             },
             dailyTaskSummary,
@@ -1231,11 +1253,12 @@ const downloadReportPdf = async (req, res) => {
         y = 36;
         y = drawSectionHeader("Daily Task Submission & Admin Verification Summary", y);
 
-        const taskCounters = r ? r.taskVerificationSummaryCounters : { submitted: 0, verified: 0, pending: 0 };
+        const taskCounters = r ? r.taskVerificationSummaryCounters : { submitted: 0, verified: 0, rejected: 0, pending: 0 };
         
         y = renderCardRow([
             { label: "STAFF SUBMITTED TASKS", value: String(taskCounters.submitted) },
             { label: "ADMIN VERIFIED TASKS", value: String(taskCounters.verified) },
+            { label: "REJECTED TASKS", value: String(taskCounters.rejected || 0) },
             { label: "PENDING VERIFICATION", value: String(taskCounters.pending) }
         ], y);
 
@@ -1243,8 +1266,8 @@ const downloadReportPdf = async (req, res) => {
         doc.fillColor("#1E293B").fontSize(9).font("Helvetica-Bold").text("Date-Wise Task Submissions & Admin Verifications:", margin, y);
         y += 14;
 
-        const subHeaders = ["Date", "Submitted", "Verified", "Pending", "Staff Breakdown"];
-        const subWidths = [85, 75, 75, 75, contentWidth - 310];
+        const subHeaders = ["Date", "Submitted", "Verified", "Rejected", "Pending", "Staff Breakdown"];
+        const subWidths = [70, 65, 65, 65, 65, contentWidth - 330];
 
         doc.rect(margin, y, contentWidth, 18).fill("#1E293B");
         doc.fillColor("#FFFFFF").fontSize(8).font("Helvetica-Bold");
@@ -1267,8 +1290,9 @@ const downloadReportPdf = async (req, res) => {
                 doc.text(tr.date, x + 8, y + 5, { width: subWidths[0] }); x += subWidths[0];
                 doc.text(`${tr.submitted} Tasks`, x + 8, y + 5, { width: subWidths[1] }); x += subWidths[1];
                 doc.text(`${tr.verified} Tasks`, x + 8, y + 5, { width: subWidths[2] }); x += subWidths[2];
-                doc.text(`${tr.pending} Tasks`, x + 8, y + 5, { width: subWidths[3] }); x += subWidths[3];
-                doc.text(tr.staffBreakdown, x + 8, y + 5, { width: subWidths[4] });
+                doc.text(`${tr.rejected || 0} Tasks`, x + 8, y + 5, { width: subWidths[3] }); x += subWidths[3];
+                doc.text(`${tr.pending} Tasks`, x + 8, y + 5, { width: subWidths[4] }); x += subWidths[4];
+                doc.text(tr.staffBreakdown, x + 8, y + 5, { width: subWidths[5] });
                 y += 18;
             });
         } else {
