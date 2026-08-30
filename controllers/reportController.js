@@ -1339,10 +1339,13 @@ const downloadReportPdf = async (req, res) => {
 
                 const rowBg = idx % 2 === 1 ? "#F8FAFC" : "#FFFFFF";
                 const titleLen = (ar.title || "").length;
-                const rowH = Math.max(24, Math.ceil(titleLen / 36) * 10 + 12);
+                const baseRowH = Math.max(24, Math.ceil(titleLen / 36) * 10 + 12);
+                const hasRejectionNotes = ar.rejectionReason && ar.rejectionReason !== "N/A";
+                const subRowH = hasRejectionNotes ? 16 : 0;
+                const totalH = baseRowH + subRowH;
 
-                doc.rect(margin, y, contentWidth, rowH).fill(rowBg);
-                doc.rect(margin, y, contentWidth, rowH).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
+                doc.rect(margin, y, contentWidth, totalH).fill(rowBg);
+                doc.rect(margin, y, contentWidth, totalH).strokeColor("#E2E8F0").lineWidth(0.5).stroke();
 
                 let x = margin;
                 doc.fillColor("#334155").fontSize(7).font("Helvetica");
@@ -1362,7 +1365,17 @@ const downloadReportPdf = async (req, res) => {
                                    (ar.status === "CRITICAL" ? "#DC2626" : "#2563EB");
                 doc.fillColor(statusColor).font("Helvetica-Bold").text(ar.status, x + 2, y + 4, { width: auditTrailWidths[8] });
 
-                y += rowH;
+                if (hasRejectionNotes) {
+                    const subY = y + baseRowH - 2;
+                    doc.rect(margin + 4, subY, contentWidth - 8, 14).fill("#FFFBEB");
+                    doc.rect(margin + 4, subY, contentWidth - 8, 14).strokeColor("#FCD34D").lineWidth(0.5).stroke();
+                    doc.fillColor("#B45309").fontSize(6.5).font("Helvetica-Bold")
+                       .text("Rejection & Reassignment History: ", margin + 8, subY + 3, { continued: true })
+                       .font("Helvetica")
+                       .text(ar.rejectionReason, { width: contentWidth - 24 });
+                }
+
+                y += totalH;
             });
         } else {
             doc.rect(margin, y, contentWidth, 18).fill("#FFFFFF");
