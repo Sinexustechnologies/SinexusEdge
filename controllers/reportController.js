@@ -475,41 +475,75 @@ const compileReportDataset = async (req) => {
 
         const latestDevStatus = allLatestStatuses.find(s => isDevMatch(s));
 
-        // Key Telemetry Summary
+        // Key Telemetry Summary (24H vs Entire Period)
+        const now = new Date();
+        const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+        const logs24h = devLogs.filter(l => {
+            const d = new Date(l.timestamp || l.createdAt);
+            return !isNaN(d.getTime()) && d >= twentyFourHoursAgo;
+        });
+
+        const ratings24h = devParticularRatings.filter(r => {
+            const d = new Date(r.timestamp || r.createdAt);
+            return !isNaN(d.getTime()) && d >= twentyFourHoursAgo;
+        });
+
+        // 24H Telemetry Summary
         let avgRating24h = "N/A";
+        if (ratings24h.length > 0) {
+            const validRatings = ratings24h.map(r => getNum(r, ["particularRating", "rating"], null)).filter(v => v !== null);
+            if (validRatings.length > 0) {
+                const sum = validRatings.reduce((acc, v) => acc + v, 0);
+                avgRating24h = `${parseFloat((sum / validRatings.length).toFixed(2))} / 5.0`;
+            }
+        }
+
+        let avgOdor24h = "N/A";
+        if (logs24h.length > 0) {
+            const validOdors = logs24h.map(l => getNum(l, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], null)).filter(v => v !== null);
+            if (validOdors.length > 0) {
+                const sum = validOdors.reduce((acc, v) => acc + v, 0);
+                avgOdor24h = `${Math.round(sum / validOdors.length)} PPM`;
+            }
+        }
+
+        let totalUsage24h = "N/A";
+        if (logs24h.length > 0) {
+            const counters = logs24h.map(l => getNum(l, ["Counter", "counterValue", "CounterValue", "counter"], null)).filter(v => v !== null);
+            if (counters.length > 0) {
+                const minC = Math.min(...counters);
+                const maxC = Math.max(...counters);
+                totalUsage24h = `${Math.max(0, maxC - minC)} Entries`;
+            }
+        }
+
+        // Entire Period Telemetry Summary
         let periodAvgRating = "N/A";
         if (devParticularRatings.length > 0) {
             const validRatings = devParticularRatings.map(r => getNum(r, ["particularRating", "rating"], null)).filter(v => v !== null);
             if (validRatings.length > 0) {
                 const sum = validRatings.reduce((acc, v) => acc + v, 0);
-                const avg = parseFloat((sum / validRatings.length).toFixed(2));
-                avgRating24h = `${avg} / 5.0`;
-                periodAvgRating = `${avg} / 5.0`;
+                periodAvgRating = `${parseFloat((sum / validRatings.length).toFixed(2))} / 5.0`;
             }
         }
 
-        let avgOdor24h = "N/A";
         let periodAvgOdor = "N/A";
         if (devLogs.length > 0) {
             const validOdors = devLogs.map(l => getNum(l, ["OdorSensVal", "odorValue", "OdorLevel", "odor"], null)).filter(v => v !== null);
             if (validOdors.length > 0) {
                 const sum = validOdors.reduce((acc, v) => acc + v, 0);
-                const avg = Math.round(sum / validOdors.length);
-                avgOdor24h = `${avg} PPM`;
-                periodAvgOdor = `${avg} PPM`;
+                periodAvgOdor = `${Math.round(sum / validOdors.length)} PPM`;
             }
         }
 
-        let totalUsage24h = "N/A";
         let periodTotalUsage = "N/A";
         if (devLogs.length > 0) {
             const counters = devLogs.map(l => getNum(l, ["Counter", "counterValue", "CounterValue", "counter"], null)).filter(v => v !== null);
             if (counters.length > 0) {
                 const minC = Math.min(...counters);
                 const maxC = Math.max(...counters);
-                const diff = Math.max(0, maxC - minC);
-                totalUsage24h = `${diff} Entries`;
-                periodTotalUsage = `${diff} Entries`;
+                periodTotalUsage = `${Math.max(0, maxC - minC)} Entries`;
             }
         }
 
