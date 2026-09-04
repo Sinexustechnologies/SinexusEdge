@@ -91,6 +91,8 @@ const registerStaff = async (req, res) => {
 
         const rawPassword = password || "Staff@1234";
         const hashedPassword = await bcrypt.hash(rawPassword, 10);
+        const acceptedAt = new Date();
+        const currentVersion = process.env.CURRENT_TERMS_VERSION || "1.0";
 
         const staff = await User.create({
             userId: staffId,
