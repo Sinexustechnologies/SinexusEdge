@@ -135,8 +135,15 @@ const getAlerts = async (req, res) => {
                 processedTaskIds.add(task._id.toString());
                 alertItem.taskId = task._id;
                 alertItem.taskStatus = task.status;
-                alertItem.adminRemarks = task.adminRemarks || alertItem.adminRemarks || task.notes || alertItem.notes || "";
-            alertItem.reassignNotes = alertItem.reassignNotes || (task ? task.notes : null) || alertItem.adminRemarks || "";
+                
+                // adminRemarks should only be present if explicitly set during VERIFIED or REJECTED status
+                if (task.status === "REJECTED" || task.status === "VERIFIED" || task.status === "RESOLVED") {
+                    alertItem.adminRemarks = task.adminRemarks || alertItem.adminRemarks || "";
+                } else {
+                    alertItem.adminRemarks = "";
+                }
+                
+                alertItem.reassignNotes = (task.reassignedAt || alertItem.reassignedAt) ? (alertItem.reassignNotes || task.notes || "") : "";
                 alertItem.taskProgressPercent = (task.status === "VERIFIED" || task.status === "RESOLVED") ? 100 : (task.progressPercent || 0);
 
                 if (task.status === "VERIFIED" || task.status === "RESOLVED") {
@@ -168,7 +175,14 @@ const getAlerts = async (req, res) => {
                 alertItem.completedAt = task.completedAt;
                 alertItem.verifiedAt = task.verifiedAt;
                 alertItem.attempts = task.attempts || [];
-                alertItem.timeline = task.timeline || [];
+                
+                // Filter out any false REASSIGNED/REJECTED timeline steps if task was never rejected/reassigned from a previous staff
+                let cleanTimeline = Array.isArray(task.timeline) ? task.timeline : [];
+                if (task.status === "VERIFIED" || task.status === "RESOLVED") {
+                    cleanTimeline = cleanTimeline.filter(step => step.status !== "REJECTED");
+                }
+                alertItem.timeline = cleanTimeline;
+
                 if (task.staff) {
                     alertItem.staffId = task.staff._id ? task.staff._id.toString() : task.staff.toString();
                     alertItem.assignedStaffName = task.staff.name;
@@ -197,8 +211,9 @@ const getAlerts = async (req, res) => {
                 alertItem.completedAt = task.completedAt || alertItem.completedAt;
                 alertItem.assignedAt = task.assignedAt || alertItem.assignedAt;
                 alertItem.reassignedAt = task.reassignedAt || alertItem.reassignedAt || null;
-                alertItem.reassignNotes = task.notes || alertItem.reassignNotes || "";
-                alertItem.adminRemarks = task.adminRemarks || alertItem.adminRemarks || "";
+                alertItem.reassignNotes = alertItem.reassignedAt ? (task.notes || alertItem.reassignNotes || "") : "";
+                alertItem.adminRemarks = (task.status === "REJECTED" || task.status === "VERIFIED" || task.status === "RESOLVED") ? (task.adminRemarks || alertItem.adminRemarks || "") : "";
+                alertItem.reassignedStaffName = alertItem.assignedStaffName || "";
                 alertItem.reassignedStaffName = alertItem.assignedStaffName || "";
 
                 if (task.status === "EXPIRED" || alertItem.status === "EXPIRED" || alertItem.assignmentStatus === "EXPIRED") {
@@ -472,10 +487,33 @@ module.exports = {
             }
 
             try {
+                const User = require("../models/User");
                 const notificationService = require("../services/notificationService");
-                notificationService.markNotificationsReadForAlert(alert._id).catch(e => console.log("Mark notifications read err:", e.message));
+                let staffUser = null;
+                if (task) {
+                    if (task.staff) {
+                        staffUser = (typeof task.staff === "object" && task.staff._id) ? task.staff : await User.findById(task.staff);
+                    }
+                    if (!staffUser && Array.isArray(task.attempts) && task.attempts.length > 0) {
+                        const lastAttemptStaff = task.attempts[task.attempts.length - 1].staff;
+                        if (lastAttemptStaff) {
+                            staffUser = (typeof lastAttemptStaff === "object" && lastAttemptStaff._id) ? lastAttemptStaff : await User.findById(lastAttemptStaff);
+                        }
+                    }
+                }
+                if (!staffUser && alert.assignedStaff) {
+                    staffUser = await User.findById(alert.assignedStaff);
+                }
+                if (!staffUser && dev && dev.assignedStaff) {
+                    staffUser = await User.findById(dev.assignedStaff);
+                }
+                const adminUser = req.user ? await User.findById(req.user.id) : null;
+                if (staffUser) {
+                    await notificationService.sendTaskVerifiedNotification(task || { alert: alert._id, device_uid: alert.deviceId }, staffUser, adminUser, dev);
+                }
+                await notificationService.markNotificationsReadForAlert(alert._id);
             } catch (err) {
-                console.log("Error marking notifications read:", err.message);
+                console.log("Error sending verification notification in resolveAlert:", err.message);
             }
 
             return res.status(200).json({
@@ -600,10 +638,33 @@ module.exports = {
             }
 
             try {
+                const User = require("../models/User");
                 const notificationService = require("../services/notificationService");
+                let staffUser = null;
+                if (task) {
+                    if (task.staff) {
+                        staffUser = (typeof task.staff === "object" && task.staff._id) ? task.staff : await User.findById(task.staff);
+                    }
+                    if (!staffUser && Array.isArray(task.attempts) && task.attempts.length > 0) {
+                        const lastAttemptStaff = task.attempts[task.attempts.length - 1].staff;
+                        if (lastAttemptStaff) {
+                            staffUser = (typeof lastAttemptStaff === "object" && lastAttemptStaff._id) ? lastAttemptStaff : await User.findById(lastAttemptStaff);
+                        }
+                    }
+                }
+                if (!staffUser && alert.assignedStaff) {
+                    staffUser = await User.findById(alert.assignedStaff);
+                }
+                if (!staffUser && dev && dev.assignedStaff) {
+                    staffUser = await User.findById(dev.assignedStaff);
+                }
+                const adminUser = req.user ? await User.findById(req.user.id) : null;
+                if (staffUser) {
+                    await notificationService.sendTaskVerifiedNotification(task || { alert: alert._id, device_uid: alert.deviceId }, staffUser, adminUser, dev);
+                }
                 await notificationService.markNotificationsReadForAlert(alert._id);
             } catch (err) {
-                console.log("Error marking notifications read:", err.message);
+                console.log("Error sending verification notification in forceVerifyAlert:", err.message);
             }
 
             return res.status(200).json({
@@ -651,7 +712,7 @@ module.exports = {
 
             const now = new Date();
             const prevStaffId = alert.assignedStaff ? alert.assignedStaff.toString() : (alert.staffId ? alert.staffId.toString() : null);
-            const isReassign = Boolean(prevStaffId || alert.status === "REJECTED" || alert.status === "ASSIGNED" || alert.taskId);
+            const isReassign = Boolean(prevStaffId && prevStaffId !== staff._id.toString());
 
             // Find or create device
             let device = null;
@@ -679,12 +740,16 @@ module.exports = {
                 task.status = "ASSIGNED";
                 task.progressPercent = 0;
                 task.assignedAt = now;
-                if (isReassign) task.reassignedAt = now;
+                if (isReassign) {
+                    task.reassignedAt = now;
+                } else {
+                    task.reassignedAt = null;
+                }
                 task.assignedBy = req.user ? req.user.id : null;
                 if (notes) {
                     task.notes = notes;
-                    task.adminRemarks = notes;
                 }
+                task.adminRemarks = "";
                 task.startedAt = null;
                 task.submittedAt = null;
                 task.photosUploadedAt = null;

@@ -286,18 +286,40 @@ async function sendTaskVerifiedNotification(taskDoc, staffUser, adminUser, devic
     try {
         if (!staffUser) return;
 
+        // Ensure fresh staff user data from DB for accurate FCM tokens & profile
+        const staffId = staffUser._id || staffUser;
+        const freshStaff = await User.findById(staffId) || staffUser;
+        if (!freshStaff || !freshStaff._id) return;
+
+        // Ensure fresh device doc or resolve from taskDoc if deviceDoc is missing
+        let resolvedDevice = deviceDoc;
+        if (!resolvedDevice && taskDoc) {
+            if (taskDoc.device) {
+                resolvedDevice = await Device.findById(taskDoc.device);
+            }
+            if (!resolvedDevice && (taskDoc.deviceId || taskDoc.device_uid)) {
+                resolvedDevice = await Device.findOne({
+                    $or: [
+                        { device_uid: taskDoc.device_uid || taskDoc.deviceId },
+                        { deviceId: taskDoc.deviceId || taskDoc.device_uid }
+                    ]
+                });
+            }
+        }
+
         const title = "✅ Task Verified Clean";
-        const deviceUid = deviceDoc ? deviceDoc.device_uid : "N/A";
+        const deviceUid = resolvedDevice ? (resolvedDevice.device_uid || resolvedDevice.deviceId) : (taskDoc?.device_uid || taskDoc?.deviceId || "N/A");
         const adminDisplayName = (adminUser && (adminUser.name || adminUser.contactPersonName)) ? (adminUser.name || adminUser.contactPersonName) : 'Admin';
-        const message = `Admin ${adminDisplayName} has verified your task for device ${deviceUid} (${deviceDoc?.location || ''}).`;
+        const locationText = resolvedDevice?.location ? ` (${resolvedDevice.location})` : '';
+        const message = `Admin ${adminDisplayName} has verified your task for device ${deviceUid}${locationText}.`;
 
         // Save DB Notification
         const dbNotification = await Notification.create({
-            recipient: staffUser._id,
+            recipient: freshStaff._id,
             recipientRole: "staff",
             alert: taskDoc ? taskDoc.alert : null,
             device_uid: deviceUid,
-            device: deviceDoc ? deviceDoc._id : null,
+            device: resolvedDevice ? resolvedDevice._id : null,
             title: title,
             message: message,
             type: "TASK_VERIFIED"
@@ -305,8 +327,8 @@ async function sendTaskVerifiedNotification(taskDoc, staffUser, adminUser, devic
 
         // Send FCM Push directly to staff tokens
         let userTokens = [];
-        if (staffUser.fcmToken) userTokens.push(staffUser.fcmToken);
-        if (Array.isArray(staffUser.fcmTokens)) userTokens.push(...staffUser.fcmTokens);
+        if (freshStaff.fcmToken) userTokens.push(freshStaff.fcmToken);
+        if (Array.isArray(freshStaff.fcmTokens)) userTokens.push(...freshStaff.fcmTokens);
         userTokens = Array.from(new Set(userTokens.filter(Boolean)));
 
         if (userTokens.length > 0) {
@@ -315,8 +337,8 @@ async function sendTaskVerifiedNotification(taskDoc, staffUser, adminUser, devic
                 title: title,
                 body: message,
                 data: {
-                    taskId: taskDoc._id.toString(),
-                    alertId: taskDoc.alert ? taskDoc.alert.toString() : "",
+                    taskId: taskDoc ? taskDoc._id.toString() : "",
+                    alertId: taskDoc && taskDoc.alert ? taskDoc.alert.toString() : "",
                     device_uid: deviceUid,
                     notificationId: dbNotification._id.toString(),
                     type: "TASK_VERIFIED"
@@ -329,15 +351,15 @@ async function sendTaskVerifiedNotification(taskDoc, staffUser, adminUser, devic
             const socketPayload = {
                 ...dbNotification.toObject(),
                 notificationId: dbNotification._id.toString(),
-                taskId: taskDoc._id.toString(),
+                taskId: taskDoc ? taskDoc._id.toString() : "",
                 status: "VERIFIED",
                 verifiedAt: dbNotification.createdAt
             };
 
-            global.io.to(`user_${staffUser._id}`).emit("new_notification", socketPayload);
-            global.io.to(`user_${staffUser._id}`).emit("user_notification", socketPayload);
-            global.io.to(`user_${staffUser._id}`).emit("task_verified", socketPayload);
-            global.io.to(`user_${staffUser._id}`).emit("task_status_updated", socketPayload);
+            global.io.to(`user_${freshStaff._id}`).emit("new_notification", socketPayload);
+            global.io.to(`user_${freshStaff._id}`).emit("user_notification", socketPayload);
+            global.io.to(`user_${freshStaff._id}`).emit("task_verified", socketPayload);
+            global.io.to(`user_${freshStaff._id}`).emit("task_status_updated", socketPayload);
         }
     } catch (error) {
         console.log("❌ sendTaskVerifiedNotification Error:", error.message);

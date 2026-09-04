@@ -489,14 +489,27 @@ const verifyTask = async (req, res) => {
 
         // Trigger notification to staff & clear alert notifications
         try {
+            const device = dev || (task.device ? await Device.findById(task.device) : null);
             let staffUser = null;
             if (task.staff) {
                 staffUser = (typeof task.staff === "object" && task.staff._id) ? task.staff : await User.findById(task.staff);
             }
-            if (!staffUser && dev && dev.assignedStaff) {
-                staffUser = await User.findById(dev.assignedStaff);
+            if (!staffUser && Array.isArray(task.attempts) && task.attempts.length > 0) {
+                const lastAttemptStaff = task.attempts[task.attempts.length - 1].staff;
+                if (lastAttemptStaff) {
+                    staffUser = (typeof lastAttemptStaff === "object" && lastAttemptStaff._id) ? lastAttemptStaff : await User.findById(lastAttemptStaff);
+                }
             }
-            const device = dev || (task.device ? await Device.findById(task.device) : null);
+            if (!staffUser && device && device.assignedStaff) {
+                staffUser = await User.findById(device.assignedStaff);
+            }
+            if (!staffUser && task.alert) {
+                const Alert = require("../models/Alert");
+                const alertObj = await Alert.findById(task.alert);
+                if (alertObj && alertObj.assignedStaff) {
+                    staffUser = await User.findById(alertObj.assignedStaff);
+                }
+            }
             const admin = req.user ? await User.findById(req.user.id) : null;
             const notificationService = require("../services/notificationService");
 
@@ -1057,18 +1070,32 @@ const forceVerifyTask = async (req, res) => {
 
             // Trigger notification to staff on force verify
             try {
+                const device = dev || (task.device ? await Device.findById(task.device) : null);
                 let staffUser = null;
                 if (task.staff) {
                     staffUser = (typeof task.staff === "object" && task.staff._id) ? task.staff : await User.findById(task.staff);
                 }
-                if (!staffUser && dev && dev.assignedStaff) {
-                    staffUser = await User.findById(dev.assignedStaff);
+                if (!staffUser && Array.isArray(task.attempts) && task.attempts.length > 0) {
+                    const lastAttemptStaff = task.attempts[task.attempts.length - 1].staff;
+                    if (lastAttemptStaff) {
+                        staffUser = (typeof lastAttemptStaff === "object" && lastAttemptStaff._id) ? lastAttemptStaff : await User.findById(lastAttemptStaff);
+                    }
+                }
+                if (!staffUser && device && device.assignedStaff) {
+                    staffUser = await User.findById(device.assignedStaff);
+                }
+                if (!staffUser && task.alert) {
+                    const Alert = require("../models/Alert");
+                    const alertObj = await Alert.findById(task.alert);
+                    if (alertObj && alertObj.assignedStaff) {
+                        staffUser = await User.findById(alertObj.assignedStaff);
+                    }
                 }
                 const adminUser = req.user ? await User.findById(req.user.id) : null;
                 const notificationService = require("../services/notificationService");
 
                 if (staffUser) {
-                    await notificationService.sendTaskVerifiedNotification(task, staffUser, adminUser, dev);
+                    await notificationService.sendTaskVerifiedNotification(task, staffUser, adminUser, device);
                 }
                 if (task.alert) {
                     await notificationService.markNotificationsReadForAlert(task.alert);
