@@ -167,18 +167,11 @@ const processOrCreateDeviceAlertInternal = async (alertData) => {
                 }
 
                 if (global.io) {
-                    global.io.emit("alert_updated", {
-                        alertId: alt._id,
-                        status: "EXPIRED",
-                        assignmentStatus: "EXPIRED"
-                    });
-                    if (linkedTask) {
-                        global.io.emit("task_status_updated", {
-                            taskId: linkedTask._id,
-                            alertId: alt._id,
-                            status: "EXPIRED",
-                            staffId: linkedTask.staff
-                        });
+                    if (device && device.adminId) {
+                        global.io.to(`user_${device.adminId}`).emit("alert_updated", { alertId: alt._id, status: "EXPIRED", assignmentStatus: "EXPIRED" });
+                    }
+                    if (linkedTask && linkedTask.staff) {
+                        global.io.to(`user_${linkedTask.staff}`).emit("task_status_updated", { taskId: linkedTask._id, alertId: alt._id, status: "EXPIRED", staffId: linkedTask.staff });
                     }
                 }
 
@@ -271,14 +264,16 @@ const processOrCreateDeviceAlertInternal = async (alertData) => {
                 existingTask.notes = `Updated telemetry (Updations: ${existingTask.updateCount}). ${description || ""}`;
                 await existingTask.save();
                 if (global.io) {
-                    global.io.emit("task_status_updated", {
+                    const taskSocketPayload = {
                         taskId: existingTask._id,
                         status: existingTask.status,
                         updateCount: existingTask.updateCount,
                         staffId: existingTask.staff,
                         deviceUid: device ? device.device_uid : null,
                         updatedAt: existingTask.updatedAt
-                    });
+                    };
+                    if (existingTask.staff) global.io.to(`user_${existingTask.staff}`).emit("task_status_updated", taskSocketPayload);
+                    if (device && device.adminId) global.io.to(`user_${device.adminId}`).emit("task_status_updated", taskSocketPayload);
                 }
             }
             if (!existingTask) {
@@ -311,7 +306,9 @@ const processOrCreateDeviceAlertInternal = async (alertData) => {
                 }
 
                 if (global.io) {
-                    global.io.emit("new_task", { taskId: newTask._id, status: "ASSIGNED", staffId: assignedStaffId });
+                    const newTaskPayload = { taskId: newTask._id, status: "ASSIGNED", staffId: assignedStaffId };
+                    if (assignedStaffId) global.io.to(`user_${assignedStaffId}`).emit("new_task", newTaskPayload);
+                    if (device && device.adminId) global.io.to(`user_${device.adminId}`).emit("new_task", newTaskPayload);
                 }
             } else if (existingTask.status === "ASSIGNED" && !existingTask.startedAt && existingTask.staff.toString() !== assignedStaffId.toString()) {
                 const oldStaffId = existingTask.staff ? existingTask.staff.toString() : null;
@@ -342,8 +339,9 @@ const processOrCreateDeviceAlertInternal = async (alertData) => {
                 }
 
                 if (global.io) {
-                    global.io.emit("task_reassigned", { taskId: existingTask._id, status: "ASSIGNED", staffId: assignedStaffId });
-                    global.io.emit("task_status_updated", { taskId: existingTask._id, status: "ASSIGNED", staffId: assignedStaffId });
+                    const reassignedPayload = { taskId: existingTask._id, status: "ASSIGNED", staffId: assignedStaffId };
+                    if (assignedStaffId) global.io.to(`user_${assignedStaffId}`).emit("task_reassigned", reassignedPayload);
+                    if (device && device.adminId) global.io.to(`user_${device.adminId}`).emit("task_reassigned", reassignedPayload);
                 }
             }
         }

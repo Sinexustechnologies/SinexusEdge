@@ -202,9 +202,11 @@ async function sendTaskAssignedNotification(taskDoc, staffUser, adminUser, devic
             global.io.to(`user_${staffUser._id}`).emit("new_task", socketTaskPayload);
             global.io.to(`user_${staffUser._id}`).emit("task_status_updated", socketTaskPayload);
 
-            global.io.emit("new_notification", dbNotification);
-            global.io.emit("new_task", socketTaskPayload);
-            global.io.emit("task_status_updated", socketTaskPayload);
+            if (deviceDoc && deviceDoc.adminId) {
+                global.io.to(`user_${deviceDoc.adminId}`).emit("new_notification", dbNotification);
+                global.io.to(`user_${deviceDoc.adminId}`).emit("new_task", socketTaskPayload);
+                global.io.to(`user_${deviceDoc.adminId}`).emit("task_status_updated", socketTaskPayload);
+            }
         }
     } catch (error) {
         console.log("❌ sendTaskAssignedNotification Error:", error.message);
@@ -231,10 +233,7 @@ async function sendTaskSubmittedNotification(taskDoc, staffUser, deviceDoc) {
             const admin = await User.findById(deviceDoc.adminId);
             if (admin) recipientMap.set(admin._id.toString(), admin);
         }
-        if (recipientMap.size === 0) {
-            const firstAdmin = await User.findOne({ role: "admin" });
-            if (firstAdmin) recipientMap.set(firstAdmin._id.toString(), firstAdmin);
-        }
+
 
         const recipients = Array.from(recipientMap.values());
         const allAdminTokens = new Set();
