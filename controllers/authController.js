@@ -253,6 +253,8 @@ const login = async (req, res, next) => {
             { expiresIn: "7d" }
         );
 
+
+
         
         const currentTermsVersion = process.env.CURRENT_TERMS_VERSION || "1.0";
         const requiresTermsReacceptance = !user.termsAccepted ||
@@ -341,12 +343,27 @@ const refresh = async (req, res, next) => {
 
 const logout = async (req, res, next) => {
     try {
+        const { fcmToken } = req.body || {};
         const user = await User.findById(req.user.id);
         if (user) {
             user.refreshToken = null;
+            if (fcmToken) {
+                user.fcmToken = null;
+                user.fcmTokens = (user.fcmTokens || []).filter(t => t !== fcmToken);
+            } else {
+                user.fcmToken = null;
+                user.fcmTokens = [];
+            }
             await user.save();
+
+            if (fcmToken) {
+                await User.updateMany(
+                    { $or: [{ fcmToken: fcmToken }, { fcmTokens: fcmToken }] },
+                    { $unset: { fcmToken: "" }, $pull: { fcmTokens: fcmToken } }
+                );
+            }
         }
-        res.status(200).json({ success: true, message: "Logged out" });
+        res.status(200).json({ success: true, message: "Logged out and FCM token unregistered" });
     } catch (error) {
         next(error);
     }

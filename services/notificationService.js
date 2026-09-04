@@ -158,17 +158,11 @@ async function sendTaskAssignedNotification(taskDoc, staffUser, adminUser, devic
             type: "TASK_ASSIGNED"
         });
 
-        // Send FCM Push
+        // Send FCM Push directly to staff tokens
         let userTokens = [];
         if (staffUser.fcmToken) userTokens.push(staffUser.fcmToken);
         if (Array.isArray(staffUser.fcmTokens)) userTokens.push(...staffUser.fcmTokens);
         userTokens = Array.from(new Set(userTokens.filter(Boolean)));
-
-        if (userTokens.length > 0) {
-            const adminUsers = await User.find({ role: "admin", $or: [{ fcmToken: { $in: userTokens } }, { fcmTokens: { $in: userTokens } }] }).select("fcmToken fcmTokens").lean();
-            const adminTokensSet = new Set(adminUsers.flatMap(a => [a.fcmToken, ...(a.fcmTokens || [])].filter(Boolean)));
-            userTokens = userTokens.filter(t => !adminTokensSet.has(t));
-        }
 
         if (userTokens.length > 0) {
             await sendPushNotification({
@@ -178,12 +172,14 @@ async function sendTaskAssignedNotification(taskDoc, staffUser, adminUser, devic
                 data: {
                     taskId: taskDoc._id.toString(),
                     alertId: taskDoc.alert ? taskDoc.alert.toString() : "",
-                    device_uid: deviceUid
+                    device_uid: deviceUid,
+                    notificationId: dbNotification._id.toString(),
+                    type: "TASK_ASSIGNED"
                 }
             });
         }
 
-        // Targeted & Broadcast Socket emission
+        // Targeted Socket emission
         if (global.io) {
             const socketTaskPayload = {
                 taskId: taskDoc._id,
@@ -234,12 +230,10 @@ async function sendTaskSubmittedNotification(taskDoc, staffUser, deviceDoc) {
             if (admin) recipientMap.set(admin._id.toString(), admin);
         }
 
-
         const recipients = Array.from(recipientMap.values());
         const allAdminTokens = new Set();
 
         for (const adminUser of recipients) {
-            // Collect primary FCM token first to prevent multiple tokens for same device
             if (adminUser.fcmToken) {
                 allAdminTokens.add(adminUser.fcmToken);
             } else if (Array.isArray(adminUser.fcmTokens)) {
@@ -264,7 +258,7 @@ async function sendTaskSubmittedNotification(taskDoc, staffUser, deviceDoc) {
             }
         }
 
-        // Send FCM Push ONCE for all targeted admin tokens (strictly deduplicated)
+        // Send FCM Push ONCE for all targeted admin tokens
         const userTokens = Array.from(allAdminTokens);
         if (userTokens.length > 0) {
             await sendPushNotification({
@@ -274,7 +268,8 @@ async function sendTaskSubmittedNotification(taskDoc, staffUser, deviceDoc) {
                 data: {
                     taskId: taskDoc._id.toString(),
                     alertId: taskDoc.alert ? taskDoc.alert.toString() : "",
-                    device_uid: deviceUid
+                    device_uid: deviceUid,
+                    type: "TASK_SUBMITTED"
                 }
             });
         }
@@ -308,17 +303,11 @@ async function sendTaskVerifiedNotification(taskDoc, staffUser, adminUser, devic
             type: "TASK_VERIFIED"
         });
 
-        // Send FCM Push
+        // Send FCM Push directly to staff tokens
         let userTokens = [];
         if (staffUser.fcmToken) userTokens.push(staffUser.fcmToken);
         if (Array.isArray(staffUser.fcmTokens)) userTokens.push(...staffUser.fcmTokens);
         userTokens = Array.from(new Set(userTokens.filter(Boolean)));
-
-        if (userTokens.length > 0) {
-            const adminUsers = await User.find({ role: "admin", $or: [{ fcmToken: { $in: userTokens } }, { fcmTokens: { $in: userTokens } }] }).select("fcmToken fcmTokens").lean();
-            const adminTokensSet = new Set(adminUsers.flatMap(a => [a.fcmToken, ...(a.fcmTokens || [])].filter(Boolean)));
-            userTokens = userTokens.filter(t => !adminTokensSet.has(t));
-        }
 
         if (userTokens.length > 0) {
             await sendPushNotification({
@@ -328,15 +317,27 @@ async function sendTaskVerifiedNotification(taskDoc, staffUser, adminUser, devic
                 data: {
                     taskId: taskDoc._id.toString(),
                     alertId: taskDoc.alert ? taskDoc.alert.toString() : "",
-                    device_uid: deviceUid
+                    device_uid: deviceUid,
+                    notificationId: dbNotification._id.toString(),
+                    type: "TASK_VERIFIED"
                 }
             });
         }
 
-        // Targeted Socket emission
+        // Targeted Socket emission to staff
         if (global.io) {
-            global.io.to(`user_${staffUser._id}`).emit("new_notification", dbNotification);
-            global.io.to(`user_${staffUser._id}`).emit("user_notification", dbNotification);
+            const socketPayload = {
+                ...dbNotification.toObject(),
+                notificationId: dbNotification._id.toString(),
+                taskId: taskDoc._id.toString(),
+                status: "VERIFIED",
+                verifiedAt: dbNotification.createdAt
+            };
+
+            global.io.to(`user_${staffUser._id}`).emit("new_notification", socketPayload);
+            global.io.to(`user_${staffUser._id}`).emit("user_notification", socketPayload);
+            global.io.to(`user_${staffUser._id}`).emit("task_verified", socketPayload);
+            global.io.to(`user_${staffUser._id}`).emit("task_status_updated", socketPayload);
         }
     } catch (error) {
         console.log("❌ sendTaskVerifiedNotification Error:", error.message);
@@ -369,17 +370,11 @@ async function sendTaskRejectedNotification(taskDoc, staffUser, adminUser, devic
             type: "TASK_REJECTED"
         });
 
-        // Send FCM Push
+        // Send FCM Push directly to staff tokens
         let userTokens = [];
         if (staffUser.fcmToken) userTokens.push(staffUser.fcmToken);
         if (Array.isArray(staffUser.fcmTokens)) userTokens.push(...staffUser.fcmTokens);
         userTokens = Array.from(new Set(userTokens.filter(Boolean)));
-
-        if (userTokens.length > 0) {
-            const adminUsers = await User.find({ role: "admin", $or: [{ fcmToken: { $in: userTokens } }, { fcmTokens: { $in: userTokens } }] }).select("fcmToken fcmTokens").lean();
-            const adminTokensSet = new Set(adminUsers.flatMap(a => [a.fcmToken, ...(a.fcmTokens || [])].filter(Boolean)));
-            userTokens = userTokens.filter(t => !adminTokensSet.has(t));
-        }
 
         if (userTokens.length > 0) {
             await sendPushNotification({
@@ -389,15 +384,26 @@ async function sendTaskRejectedNotification(taskDoc, staffUser, adminUser, devic
                 data: {
                     taskId: taskDoc._id.toString(),
                     alertId: taskDoc.alert ? taskDoc.alert.toString() : "",
-                    device_uid: deviceUid
+                    device_uid: deviceUid,
+                    notificationId: dbNotification._id.toString(),
+                    type: "TASK_REJECTED"
                 }
             });
         }
 
         // Targeted Socket emission
         if (global.io) {
-            global.io.to(`user_${staffUser._id}`).emit("new_notification", dbNotification);
-            global.io.to(`user_${staffUser._id}`).emit("user_notification", dbNotification);
+            const socketPayload = {
+                ...dbNotification.toObject(),
+                notificationId: dbNotification._id.toString(),
+                taskId: taskDoc._id.toString(),
+                status: "REJECTED",
+                rejectedAt: dbNotification.createdAt
+            };
+
+            global.io.to(`user_${staffUser._id}`).emit("new_notification", socketPayload);
+            global.io.to(`user_${staffUser._id}`).emit("user_notification", socketPayload);
+            global.io.to(`user_${staffUser._id}`).emit("task_status_updated", socketPayload);
         }
     } catch (error) {
         console.log("❌ sendTaskRejectedNotification Error:", error.message);
@@ -436,12 +442,6 @@ async function sendTaskReassignedNotification(taskDoc, oldStaffUser, newStaffUse
             if (oldStaffUser.fcmToken) oldTokens.push(oldStaffUser.fcmToken);
             if (Array.isArray(oldStaffUser.fcmTokens)) oldTokens.push(...oldStaffUser.fcmTokens);
             oldTokens = Array.from(new Set(oldTokens.filter(Boolean)));
-
-            if (oldTokens.length > 0) {
-                const adminUsers = await User.find({ role: "admin", $or: [{ fcmToken: { $in: oldTokens } }, { fcmTokens: { $in: oldTokens } }] }).select("fcmToken fcmTokens").lean();
-                const adminTokensSet = new Set(adminUsers.flatMap(a => [a.fcmToken, ...(a.fcmTokens || [])].filter(Boolean)));
-                oldTokens = oldTokens.filter(t => !adminTokensSet.has(t));
-            }
 
             if (oldTokens.length > 0) {
                 await sendPushNotification({
@@ -500,12 +500,6 @@ async function sendTaskReassignedNotification(taskDoc, oldStaffUser, newStaffUse
             newTokens = Array.from(new Set(newTokens.filter(Boolean)));
 
             if (newTokens.length > 0) {
-                const adminUsers = await User.find({ role: "admin", $or: [{ fcmToken: { $in: newTokens } }, { fcmTokens: { $in: newTokens } }] }).select("fcmToken fcmTokens").lean();
-                const adminTokensSet = new Set(adminUsers.flatMap(a => [a.fcmToken, ...(a.fcmTokens || [])].filter(Boolean)));
-                newTokens = newTokens.filter(t => !adminTokensSet.has(t));
-            }
-
-            if (newTokens.length > 0) {
                 await sendPushNotification({
                     tokens: newTokens,
                     title: newTitle,
@@ -542,16 +536,20 @@ async function sendTaskReassignedNotification(taskDoc, oldStaffUser, newStaffUse
 }
 
 /**
- * Automatically mark all unread notifications read for a given alertId when the alert is resolved or verified.
+ * Automatically mark unread MQTT alert notifications read for a given alertId when the alert is resolved or verified,
+ * WITHOUT clearing user task status notifications (like TASK_VERIFIED).
  */
 async function markNotificationsReadForAlert(alertId) {
     if (!alertId) return;
     try {
-        await Notification.updateMany({ alert: alertId, read: false }, { read: true });
+        await Notification.updateMany(
+            { alert: alertId, type: "MQTT_ALERT", read: false },
+            { read: true }
+        );
         if (global.io) {
             global.io.emit("alert_notifications_cleared", { alertId: alertId.toString() });
         }
-        console.log(`🧹 Marked all unread notifications read for alertId: ${alertId}`);
+        console.log(`🧹 Marked unread MQTT alert notifications read for alertId: ${alertId}`);
     } catch (error) {
         console.log("❌ markNotificationsReadForAlert Error:", error.message);
     }
