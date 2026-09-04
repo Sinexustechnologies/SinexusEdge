@@ -89,10 +89,6 @@ const registerStaff = async (req, res) => {
             device = await Device.findOne({ adminId: req.user.id });
         }
 
-        if (!device) {
-            device = await Device.findOne();
-        }
-
         const rawPassword = password || "Staff@1234";
         const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
@@ -190,11 +186,7 @@ const getStaff = async (req, res) => {
             }).populate("assignedDevice").lean();
         }
 
-        // Fallback: If no staff explicitly matched this adminId (e.g. legacy records without adminId field),
-        // fallback to staff members in the platform
-        if (!staff || staff.length === 0) {
-            staff = await User.find({ role: { $regex: /^staff$/i } }).populate("assignedDevice").lean();
-        }
+
 
         return res.status(200).json({
             success: true,

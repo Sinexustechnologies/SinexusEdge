@@ -153,12 +153,6 @@ const getAllAssignments = async (req, res) => {
                     ...(isObjectId ? [{ adminId: new mongoose.Types.ObjectId(adminId) }] : [])
                 ]
             }).select("_id deviceId device_uid locationName location floor status");
-
-            if (myDevices.length === 0) {
-                myDevices = await Device.find().select("_id deviceId device_uid locationName location floor status");
-            }
-        } else {
-            myDevices = await Device.find().select("_id deviceId device_uid locationName location floor status");
         }
         
         const myDeviceIds = myDevices.map(d => d._id);
@@ -182,9 +176,7 @@ const getAllAssignments = async (req, res) => {
             }).select("name empId userId email mobile designation").lean();
         }
 
-        if (!adminStaff || adminStaff.length === 0) {
-            adminStaff = await User.find({ role: { $regex: /^staff$/i } }).select("name empId userId email mobile designation").lean();
-        }
+
 
         const activeAssignments = await Assignment.find({
             device: { $in: myDeviceIds },
