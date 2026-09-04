@@ -309,6 +309,17 @@ const getAlerts = async (req, res) => {
             alertItem.updatedAt = alertItem.updatedAt || latestTime;
             alertItem.timestamp = latestTime;
 
+            if (alertItem.status === "VERIFIED" || alertItem.status === "RESOLVED") {
+                const validTime = alertItem.resolvedAt || alertItem.verifiedAt || alertItem.completedAt || alertItem.updatedAt || alertItem.createdAt || new Date();
+                alertItem.verifiedAt = alertItem.verifiedAt || validTime;
+                alertItem.resolvedAt = alertItem.resolvedAt || validTime;
+                alertItem.completedAt = alertItem.completedAt || validTime;
+
+                if (!alertItem.assignedStaffName) {
+                    alertItem.assignedStaffName = "Admin (Force Verified)";
+                }
+            }
+
             if (alertItem.staffId) {
                 const staffObj = {
                     _id: alertItem.staffId,
@@ -319,8 +330,8 @@ const getAlerts = async (req, res) => {
                 alertItem.staff = staffObj;
                 alertItem.assignedStaff = staffObj;
             } else {
-                alertItem.staff = null;
-                alertItem.assignedStaff = null;
+                alertItem.staff = alertItem.assignedStaffName ? { _id: "admin", name: alertItem.assignedStaffName, empId: "ADMIN", userId: "ADMIN" } : null;
+                alertItem.assignedStaff = alertItem.staff;
             }
 
             mergedAlerts.push(alertItem);
