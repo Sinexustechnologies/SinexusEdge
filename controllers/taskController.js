@@ -489,11 +489,20 @@ const verifyTask = async (req, res) => {
 
         // Trigger notification to staff & clear alert notifications
         try {
-            const staff = await User.findById(task.staff);
+            let staffUser = null;
+            if (task.staff) {
+                staffUser = (typeof task.staff === "object" && task.staff._id) ? task.staff : await User.findById(task.staff);
+            }
+            if (!staffUser && dev && dev.assignedStaff) {
+                staffUser = await User.findById(dev.assignedStaff);
+            }
             const device = dev || (task.device ? await Device.findById(task.device) : null);
-            const admin = await User.findById(req.user.id);
+            const admin = req.user ? await User.findById(req.user.id) : null;
             const notificationService = require("../services/notificationService");
-            notificationService.sendTaskVerifiedNotification(task, staff, admin, device);
+
+            if (staffUser) {
+                await notificationService.sendTaskVerifiedNotification(task, staffUser, admin, device);
+            }
             if (task.alert) {
                 await notificationService.markNotificationsReadForAlert(task.alert);
             }
@@ -1044,6 +1053,28 @@ const forceVerifyTask = async (req, res) => {
             if (global.io) {
                 global.io.emit("task_status_updated", { taskId: task._id, status: "VERIFIED", progressPercent: 100, adminRemarks: remarks });
                 global.io.emit("new_alert", { alertId: task.alert, status: "VERIFIED", adminRemarks: remarks });
+            }
+
+            // Trigger notification to staff on force verify
+            try {
+                let staffUser = null;
+                if (task.staff) {
+                    staffUser = (typeof task.staff === "object" && task.staff._id) ? task.staff : await User.findById(task.staff);
+                }
+                if (!staffUser && dev && dev.assignedStaff) {
+                    staffUser = await User.findById(dev.assignedStaff);
+                }
+                const adminUser = req.user ? await User.findById(req.user.id) : null;
+                const notificationService = require("../services/notificationService");
+
+                if (staffUser) {
+                    await notificationService.sendTaskVerifiedNotification(task, staffUser, adminUser, dev);
+                }
+                if (task.alert) {
+                    await notificationService.markNotificationsReadForAlert(task.alert);
+                }
+            } catch (err) {
+                console.log("Error sending forceVerifyTask notification:", err.message);
             }
         } else if (alertId) {
             const alertObj = await Alert.findByIdAndUpdate(alertId, {

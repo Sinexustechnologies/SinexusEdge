@@ -57,13 +57,20 @@ const getUserNotifications = async (req, res, next) => {
         const total = await Notification.countDocuments({ recipient: userId });
         const unreadCount = await Notification.countDocuments({ recipient: userId, read: false });
 
-        const notifications = await Notification.find({ recipient: userId })
+        const rawNotifications = await Notification.find({ recipient: userId })
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
-            .populate("device", "deviceId location floor")
+            .populate("device", "deviceId location floor device_uid")
             .populate("alert", "alertType feedback status")
             .lean();
+
+        const notifications = rawNotifications.map(n => ({
+            ...n,
+            id: n._id ? n._id.toString() : "",
+            alertId: n.alert ? (n.alert._id ? n.alert._id.toString() : n.alert.toString()) : null,
+            deviceId: n.device ? (n.device.deviceId || n.device.device_uid || "") : (n.device_uid || "")
+        }));
 
         res.status(200).json({
             success: true,
