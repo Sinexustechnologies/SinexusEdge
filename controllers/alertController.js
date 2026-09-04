@@ -67,11 +67,21 @@ const getAlerts = async (req, res) => {
                 .select("_id device_uid deviceId location floor locationName assignedStaff")
                 .lean();
         } else {
-            // ADMIN ROLE: Fetch all devices across system
-            myDevices = await Device.find({})
-                .populate("assignedStaff", "name empId userId email")
-                .select("_id device_uid deviceId location floor locationName assignedStaff adminId")
-                .lean();
+            // ADMIN ROLE: Fetch devices belonging to logged-in admin
+            const adminId = req.user ? (req.user.id || req.user._id) : null;
+            const adminConditions = [];
+            if (adminId) {
+                adminConditions.push({ adminId: adminId });
+                if (mongoose.Types.ObjectId.isValid(adminId)) {
+                    adminConditions.push({ adminId: new mongoose.Types.ObjectId(adminId) });
+                }
+            }
+            myDevices = adminConditions.length > 0
+                ? await Device.find({ $or: adminConditions })
+                    .populate("assignedStaff", "name empId userId email")
+                    .select("_id device_uid deviceId location floor locationName assignedStaff adminId")
+                    .lean()
+                : [];
         }
 
         const alertConditions = [];
@@ -324,6 +334,8 @@ const getAlerts = async (req, res) => {
 
             const devKey = (task.device_uid || task.deviceId || (task.device ? (task.device.device_uid || task.device.deviceId) : '') || '').toLowerCase();
             const devInfo = deviceMap[devKey];
+
+            if (!devInfo) continue;
 
             const taskItem = {
                 _id: task.alert ? task.alert.toString() : `task_${task._id}`,
