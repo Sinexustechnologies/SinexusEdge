@@ -13,7 +13,7 @@ const validate = (req, res, next) => {
 };
 
 const registerAdminValidator = [
-    body("userId").notEmpty().withMessage("User ID is required"),
+    body("userId").optional().notEmpty().withMessage("User ID must not be empty if provided"),
     body("email").isEmail().withMessage("Valid email is required"),
     body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
     body("companyName").notEmpty().withMessage("Company name is required"),
